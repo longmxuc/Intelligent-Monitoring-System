@@ -9,12 +9,12 @@
 > 在线体验地址：https://znhj.iepose.cn  
 >
 > <span>
-> <img src="README_IMG/截屏2025-11-20 13.49.54.png" alt="主页" style="zoom:20%;" />
-> <img src="README_IMG/截屏2025-11-20 13.53.32.png" alt="AI数据分析" style="zoom:20%;" />
+> <img src="README_IMG/截屏2025-11-20 13.49.54.png" alt="主页" style="zoom:10%;" />
+> <img src="README_IMG/截屏2025-11-20 13.53.32.png" alt="AI数据分析" style="zoom:10%;" />
 > </span>
 > <span>
-> <img src="README_IMG/截屏2025-11-20 13.56.59.png" alt="主页深色" style="zoom:20%;" />
-> <img src="README_IMG/截屏2025-11-20 13.57.24.png" alt="AI数据分析深色" style="zoom:20%;" />
+> <img src="README_IMG/截屏2025-11-20 13.56.59.png" alt="主页深色" style="zoom:10%;" />
+> <img src="README_IMG/截屏2025-11-20 13.57.24.png" alt="AI数据分析深色" style="zoom:10%;" />
 > </span>
 
 ---

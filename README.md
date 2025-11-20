@@ -7,6 +7,15 @@
 - `PythonProject/`：基于 **FastAPI + WebSocket + MQTT + MySQL** 的后端与 Web 前端，提供实时仪表盘、历史分析、异常告警闭环、AI 助手等功能。
 
 > 在线体验地址：https://znhj.iepose.cn  
+>
+> <span>
+> <img src="README_IMG/截屏2025-11-20 13.49.54.png" alt="主页" style="zoom:20%;" />
+> <img src="README_IMG/截屏2025-11-20 13.53.32.png" alt="AI数据分析" style="zoom:20%;" />
+> </span>
+> <span>
+> <img src="README_IMG/截屏2025-11-20 13.56.59.png" alt="主页深色" style="zoom:20%;" />
+> <img src="README_IMG/截屏2025-11-20 13.57.24.png" alt="AI数据分析深色" style="zoom:20%;" />
+> </span>
 
 ---
 
@@ -216,7 +225,7 @@ T=25.31H=42.88L=123.4R=1.27Y=35.6W=24.5P=1012.8
 
 6. **统一阈值与告警联动**  
    滤波后的结果会与统一配置的阈值结构体（温度、湿度、亮度、PPM、气压等）进行比较；当某物理量连续超阈值并持续超过设定时长（例如 3 s）时，触发告警模块生成告警消息并通过串口输出，与后端 `warning_data` 告警闭环逻辑相对应。
-  
+
 在代码层面，以中值滤波结构体为核心，将范围检查、变化率限制和趋势检测统一组织起来（节选自 `oled/Core/Src/main.c` 与滤波方案文档）：
 
 ```c

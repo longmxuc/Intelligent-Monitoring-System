@@ -1,0 +1,4472 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+    <meta charset="UTF-8"/>
+    <link rel="manifest" href="/resource/manifest.json">
+    <link rel="icon" type="image/x-icon" href="/resource/favicon.ico">
+    <link rel="apple-touch-icon" href="/resource/favicon_192.png" sizes="192x192">
+    <link rel="icon" href="/resource/favicon_512.png" sizes="512x512">
+    <link rel="stylesheet" href="/static/common-styles.css?v=20250205">
+    <!-- 高德地图API（Key 在服务端注入） -->
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=__AMAP_WEB_KEY__"></script>
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate"/>
+    <meta http-equiv="Pragma" content="no-cache"/>
+    <meta http-equiv="Expires" content="0"/>
+    <!-- 声明为移动Web应用（支持Edge/Chrome等） -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <!-- 声明为iOS Web应用（支持Safari） -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <!-- 隐藏iOS状态栏（让界面更像App） -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <!-- 桌面图标名称（添加到桌面时显示的名称） -->
+    <meta name="apple-mobile-web-app-title" content="智能环境监测系统">
+    <meta name="application-name" content="智能环境监测系统">
+    <title>智能环境监测系统 - 实时数据</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <style>
+        :root {
+            --bg: #0b1020;
+            --card: #0f162e;
+            --bd: #1d2b4a;
+            --text: #e6eefc;
+            --muted: #9aa6bf;
+            --good: #22c55e;
+            --bad: #ef4444;
+            --warn: #f59e0b;
+            --primary: #3b82f6;
+            --radius: 16px;
+            --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+            --chart-grid: #1b2544;
+            --chart-line-temp-cold: #38bdf8;
+            --chart-line-temp-warm: #f97316;
+            --chart-line-hum: #34d399;
+            --chart-line-lux: #a78bfa;
+            --chart-line-smoke: #fb923c;
+            --chart-line-pressure: #ec4899;
+        }
+
+        @media (prefers-color-scheme: light) {
+            :root[data-theme="auto"] {
+                --bg: #f5f7fa;
+                --card: #fff;
+                --bd: #d6d9e0;
+                --text: #111827;
+                --muted: #64748b;
+                --good: #16a34a;
+                --bad: #dc2626;
+                --warn: #ea580c;
+                --primary: #2563eb;
+                --shadow: 0 8px 18px rgba(0, 0, 0, .08);
+                --chart-grid: #e2e8f0;
+                --chart-line-temp-cold: #2563eb;
+                --chart-line-temp-warm: #ef4444;
+                --chart-line-hum: #059669;
+                --chart-line-lux: #7c3aed;
+                --chart-line-smoke: #ea580c;
+                --chart-line-pressure: #db2777;
+            }
+        }
+
+        :root[data-theme="light"] {
+            --bg: #f5f7fa;
+            --card: #fff;
+            --bd: #d6d9e0;
+            --text: #111827;
+            --muted: #64748b;
+            --good: #16a34a;
+            --bad: #dc2626;
+            --warn: #ea580c;
+            --primary: #2563eb;
+            --shadow: 0 8px 18px rgba(0, 0, 0, .08);
+            --chart-grid: #e2e8f0;
+            --chart-line-temp-cold: #2563eb;
+            --chart-line-temp-warm: #ef4444;
+            --chart-line-hum: #059669;
+            --chart-line-lux: #7c3aed;
+            --chart-line-smoke: #ea580c;
+            --chart-line-pressure: #db2777;
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html, body {
+            height: 100%
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+            letter-spacing: .2px;
+            transition: .3s;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 12px;
+                font-size: 14px
+            }
+        }
+
+        .wrap {
+            max-width: 1300px;
+            margin: 0 auto
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px
+        }
+
+        @media (max-width: 768px) {
+            header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px
+            }
+
+            h1 {
+                font-size: 16px;
+                text-align: center;
+                margin-bottom: 0;
+                justify-content: center
+            }
+
+            h1 .logo {
+                height: 26px;
+                width: auto
+            }
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 12px
+        }
+
+        h1 .logo {
+            height: 28px;
+            width: auto;
+            object-fit: contain;
+            flex-shrink: 0
+        }
+
+        .status {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: flex-end
+        }
+
+        @media (max-width: 768px) {
+            .status {
+                gap: 6px;
+                font-size: 11px;
+                justify-content: center
+            }
+
+            .badge {
+                padding: 4px 8px;
+                font-size: 11px;
+                flex-shrink: 0
+            }
+        }
+
+        .badge, .theme-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border: 1px solid var(--bd);
+            border-radius: 999px;
+            color: var(--muted);
+            background: var(--card);
+            transition: all .2s ease;
+            white-space: nowrap
+        }
+
+        .badge:hover {
+            filter: brightness(1.05)
+        }
+        
+        .badge.clickable {
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .badge.clickable:hover {
+            filter: brightness(1.15);
+            transform: translateY(-1px);
+        }
+        
+        .badge.clickable:active {
+            transform: translateY(0);
+        }
+        
+        /* 连接状态弹窗容器 */
+        .status-badge-wrapper {
+            position: relative;
+            display: inline-flex;
+        }
+        
+        /* 连接状态弹窗 */
+        .status-popup {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%) translateY(-10px);
+            background: var(--card);
+            border: 1px solid var(--bd);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: var(--shadow);
+            min-width: 340px;
+            max-width: 400px;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.2s ease;
+            z-index: 10000;
+            white-space: normal;
+        }
+        
+        .status-popup.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+            pointer-events: auto;
+        }
+        
+        /* 弹窗箭头 */
+        .status-popup::before {
+            content: '';
+            position: absolute;
+            top: -6px;
+            left: 50%;
+            transform: translateX(-50%) rotate(45deg);
+            width: 12px;
+            height: 12px;
+            background: var(--card);
+            border-left: 1px solid var(--bd);
+            border-top: 1px solid var(--bd);
+            transition: all 0.2s ease;
+        }
+        
+        /* 向下弹出（默认） */
+        .status-popup.popup-down {
+            top: calc(100% + 8px);
+            bottom: auto;
+            max-height: none;
+            transform: translateX(-50%) translateY(-10px);
+        }
+        
+        .status-popup.popup-down.show {
+            transform: translateX(-50%) translateY(0);
+        }
+        
+        .status-popup.popup-down::before {
+            top: -6px;
+            bottom: auto;
+            border-left: 1px solid var(--bd);
+            border-top: 1px solid var(--bd);
+            border-right: none;
+            border-bottom: none;
+        }
+        
+        /* 向上弹出 */
+        .status-popup.popup-up {
+            top: auto;
+            bottom: calc(100% + 8px);
+            max-height: none;
+            transform: translateX(-50%) translateY(10px);
+        }
+        
+        .status-popup.popup-up.show {
+            transform: translateX(-50%) translateY(0);
+        }
+        
+        .status-popup.popup-up::before {
+            top: auto;
+            bottom: -6px;
+            border-left: none;
+            border-top: none;
+            border-right: 1px solid var(--bd);
+            border-bottom: 1px solid var(--bd);
+        }
+        
+        .status-popup-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--bd);
+        }
+        
+        .status-popup-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text);
+        }
+        
+        .status-popup-close {
+            cursor: pointer;
+            font-size: 18px;
+            line-height: 1;
+            color: var(--muted);
+            transition: color 0.2s ease;
+            padding: 4px;
+        }
+        
+        .status-popup-close:hover {
+            color: var(--text);
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--bd);
+        }
+        
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        
+        .status-item-left {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .status-item-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text);
+        }
+        
+        .status-item-desc {
+            font-size: 11px;
+            color: var(--muted);
+        }
+        
+        .status-item-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        
+        .status-item-badge.connected {
+            background: var(--good);
+            color: white;
+        }
+        
+        .status-item-badge.disconnected {
+            background: var(--muted);
+            color: white;
+        }
+        
+        .status-item-badge .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* 响应式：小屏幕适配 */
+        @media (max-width: 768px) {
+            .status-popup {
+                /* 移除强制居中，由JavaScript动态定位 */
+                left: 0;
+                right: auto;
+                min-width: 300px;
+                max-width: calc(100vw - 20px);
+                overflow-y: auto;
+                overflow-x: hidden;
+                -webkit-overflow-scrolling: touch; /* iOS平滑滚动 */
+            }
+            
+            /* 向下弹出 */
+            .status-popup.popup-down {
+                top: calc(100% + 8px);
+                bottom: auto;
+                max-height: calc(100vh - 140px); /* 增加更多边距 */
+                transform: translateX(0) translateY(-10px);
+            }
+            
+            .status-popup.popup-down.show {
+                transform: translateX(0) translateY(0);
+            }
+            
+            .status-popup.popup-down::before {
+                top: -6px;
+                bottom: auto;
+                /* 箭头位置由JavaScript动态设置 */
+                left: 20px;
+                transform: rotate(45deg);
+                border-left: 1px solid var(--bd);
+                border-top: 1px solid var(--bd);
+                border-right: none;
+                border-bottom: none;
+            }
+            
+            /* 向上弹出 */
+            .status-popup.popup-up {
+                top: auto;
+                bottom: calc(100% + 8px);
+                max-height: calc(100vh - 140px); /* 增加更多边距 */
+                transform: translateX(0) translateY(10px);
+            }
+            
+            .status-popup.popup-up.show {
+                transform: translateX(0) translateY(0);
+            }
+            
+            .status-popup.popup-up::before {
+                top: auto;
+                bottom: -6px;
+                /* 箭头位置由JavaScript动态设置 */
+                left: 20px;
+                transform: rotate(45deg);
+                border-left: none;
+                border-top: none;
+                border-right: 1px solid var(--bd);
+                border-bottom: 1px solid var(--bd);
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .status-popup {
+                min-width: 280px;
+                max-width: calc(100vw - 20px);
+                left: auto;
+                right: 0;
+                overflow-y: auto;
+                overflow-x: hidden;
+            }
+            
+            /* 向下弹出 */
+            .status-popup.popup-down {
+                top: calc(100% + 8px);
+                bottom: auto;
+                max-height: calc(100vh - 140px); /* 增加更多边距 */
+                transform: translateX(0) translateY(-10px);
+            }
+            
+            .status-popup.popup-down.show {
+                transform: translateX(0) translateY(0);
+            }
+            
+            .status-popup.popup-down::before {
+                top: -6px;
+                bottom: auto;
+                left: auto;
+                right: 40px;
+                transform: rotate(45deg);
+                border-left: 1px solid var(--bd);
+                border-top: 1px solid var(--bd);
+                border-right: none;
+                border-bottom: none;
+            }
+            
+            /* 向上弹出 */
+            .status-popup.popup-up {
+                top: auto;
+                bottom: calc(100% + 8px);
+                max-height: calc(100vh - 140px); /* 增加更多边距 */
+                transform: translateX(0) translateY(10px);
+            }
+            
+            .status-popup.popup-up.show {
+                transform: translateX(0) translateY(0);
+            }
+            
+            .status-popup.popup-up::before {
+                top: auto;
+                bottom: -6px;
+                left: auto;
+                right: 40px;
+                transform: rotate(45deg);
+                border-left: none;
+                border-top: none;
+                border-right: 1px solid var(--bd);
+                border-bottom: 1px solid var(--bd);
+            }
+        }
+        
+        /* 防止小屏幕时弹窗左侧超出 */
+        @media (max-width: 420px) {
+            .status-popup {
+                right: -10px;
+            }
+            
+            .status-popup::before {
+                right: 30px;
+            }
+        }
+
+        .theme-toggle {
+            cursor: pointer;
+            user-select: none;
+            text-decoration: none
+        }
+
+        .theme-toggle:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px)
+        }
+
+        .theme-toggle:active {
+            transform: translateY(0) scale(0.98)
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: #94a3b8
+        }
+
+        .dot.ok {
+            background: var(--good)
+        }
+
+        .dot.err {
+            background: var(--bad)
+        }
+
+        .row {
+            display: grid;
+            gap: 12px;
+            margin-bottom: 12px;
+            grid-template-columns: repeat(3, 1fr);
+        }
+        
+        /* 小屏幕（包括手机）：3行2列布局 */
+        @media (max-width: 768px) {
+            .row {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--bd);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 16px;
+            min-height: 170px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            transition: border-color .5s ease, border-width .3s ease, box-shadow .5s ease;
+            position: relative;
+            min-width: 0; /* 防止 grid 中的卡片被内容撑开 */
+            overflow: hidden; /* 防止内容溢出 */
+        }
+        
+        /* 卡片内容容器，确保内容在上层 */
+        .card > * {
+            position: relative;
+            z-index: 1;
+        }
+        
+        /* 警告状态：橙色边框 */
+        .card.card-warning {
+            border: 3px solid var(--warn);
+            box-shadow: 
+                0 0 0 1px rgba(245, 158, 11, 0.3), 
+                0 0 20px rgba(245, 158, 11, 0.4),
+                var(--shadow);
+        }
+        
+        /* 警告状态：橙色跑马灯效果 */
+        .card.card-warning::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            border-radius: var(--radius);
+            padding: 3px;
+            background: linear-gradient(90deg, 
+                transparent 0%,
+                transparent 10%,
+                rgba(245, 158, 11, 0.6) 20%,
+                rgba(245, 158, 11, 1) 25%,
+                rgba(255, 200, 50, 1) 30%,
+                rgba(245, 158, 11, 1) 35%,
+                rgba(245, 158, 11, 0.6) 40%,
+                transparent 50%,
+                transparent 60%,
+                rgba(245, 158, 11, 0.6) 70%,
+                rgba(245, 158, 11, 1) 75%,
+                rgba(255, 200, 50, 1) 80%,
+                rgba(245, 158, 11, 1) 85%,
+                rgba(245, 158, 11, 0.6) 90%,
+                transparent 100%);
+            background-size: 200% 100%;
+            -webkit-mask-image: linear-gradient(#fff 0 0), linear-gradient(#fff 0 0);
+            -webkit-mask-clip: content-box, border-box;
+            -webkit-mask-composite: xor;
+            mask-image: linear-gradient(#fff 0 0), linear-gradient(#fff 0 0);
+            mask-clip: content-box, border-box;
+            mask-composite: exclude;
+            z-index: 0;
+            animation: warningMarquee 2s linear infinite;
+            pointer-events: none;
+        }
+        
+        /* 警告状态：主数字变橙色，带渐变动画 */
+        .card.card-warning .value {
+            color: var(--warn);
+            text-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
+        }
+        
+        /* 危险状态：红色边框 */
+        .card.card-danger {
+            border: 3px solid var(--bad);
+            box-shadow: 
+                0 0 0 1px rgba(239, 68, 68, 0.4), 
+                0 0 25px rgba(239, 68, 68, 0.5),
+                var(--shadow);
+            animation: dangerPulse 1.5s ease-in-out infinite;
+        }
+        
+        /* 危险状态：红色跑马灯效果 */
+        .card.card-danger::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            border-radius: var(--radius);
+            padding: 3px;
+            background: linear-gradient(90deg, 
+                transparent 0%,
+                transparent 8%,
+                rgba(239, 68, 68, 0.5) 15%,
+                rgba(239, 68, 68, 1) 20%,
+                rgba(255, 100, 100, 1) 25%,
+                rgba(239, 68, 68, 1) 30%,
+                rgba(239, 68, 68, 0.5) 35%,
+                transparent 42%,
+                transparent 58%,
+                rgba(239, 68, 68, 0.5) 65%,
+                rgba(239, 68, 68, 1) 70%,
+                rgba(255, 100, 100, 1) 75%,
+                rgba(239, 68, 68, 1) 80%,
+                rgba(239, 68, 68, 0.5) 85%,
+                transparent 92%,
+                transparent 100%);
+            background-size: 200% 100%;
+            -webkit-mask-image: linear-gradient(#fff 0 0), linear-gradient(#fff 0 0);
+            -webkit-mask-clip: content-box, border-box;
+            -webkit-mask-composite: xor;
+            mask-image: linear-gradient(#fff 0 0), linear-gradient(#fff 0 0);
+            mask-clip: content-box, border-box;
+            mask-composite: exclude;
+            z-index: 0;
+            animation: dangerMarquee 1.2s linear infinite;
+            pointer-events: none;
+        }
+        
+        /* 危险状态：主数字变红色，带发光效果 */
+        .card.card-danger .value {
+            color: var(--bad);
+            text-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+        }
+        
+        /* 橙色跑马灯动画 */
+        @keyframes warningMarquee {
+            0% {
+                background-position: 0% 0%;
+            }
+            100% {
+                background-position: 200% 0%;
+            }
+        }
+        
+        /* 红色跑马灯动画（更快） */
+        @keyframes dangerMarquee {
+            0% {
+                background-position: 0% 0%;
+            }
+            100% {
+                background-position: 200% 0%;
+            }
+        }
+        
+        /* 危险状态脉冲动画 */
+        @keyframes dangerPulse {
+            0%, 100% {
+                box-shadow: 
+                    0 0 0 1px rgba(239, 68, 68, 0.4), 
+                    0 0 25px rgba(239, 68, 68, 0.5),
+                    var(--shadow);
+            }
+            50% {
+                box-shadow: 
+                    0 0 0 2px rgba(239, 68, 68, 0.6), 
+                    0 0 35px rgba(239, 68, 68, 0.7),
+                    var(--shadow);
+            }
+        }
+
+
+        .label {
+            font-size: 12px;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            color: var(--muted)
+        }
+
+        .value {
+            margin-top: 8px;
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            flex-wrap: nowrap;
+            font-weight: 900;
+            line-height: 1;
+            white-space: nowrap;
+            font-size: clamp(40px, 6vw, 72px);
+            overflow: hidden; /* 防止数值溢出 */
+            min-width: 0; /* 允许 flex 子元素收缩 */
+            transition: color .5s ease, text-shadow .5s ease
+        }
+        
+        .value > span:first-child {
+            min-width: 0; /* 允许数值部分收缩 */
+            overflow: hidden;
+        }
+
+        .unit {
+            font-size: clamp(16px, 2vw, 24px);
+            color: var(--muted);
+            font-weight: 700;
+            flex-shrink: 0;
+            min-width: fit-content
+        }
+
+        .trend {
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 13px;
+            display: flex;
+            gap: 8px;
+            align-items: center
+        }
+
+        .trend .arrow {
+            font-weight: 900
+        }
+
+        .trend.up {
+            color: var(--bad)
+        }
+
+        .trend.down {
+            color: var(--good)
+        }
+
+        .split {
+            display: grid;
+            gap: 12px;
+            grid-template-columns: repeat(4, 1fr);
+            align-items: start
+        }
+
+        .col {
+            min-width: 0
+        }
+
+        /* 中等屏幕：2列 */
+        @media (max-width: 1200px) {
+            .split {
+                grid-template-columns: 1fr 1fr
+            }
+        }
+
+        /* 手机端：1列 */
+        @media (max-width: 768px) {
+            .split {
+                grid-template-columns: 1fr
+            }
+        }
+
+        .chart-card, .table-card {
+            background: var(--card);
+            border: 1px solid var(--bd);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow)
+        }
+
+        .chart-card {
+            padding: 16px
+        }
+
+        .chart-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            gap: 10px
+        }
+
+        .chart-actions {
+            display: flex;
+            gap: 4px;
+            flex-wrap: nowrap;
+            align-items: center
+        }
+
+        @media (max-width: 768px) {
+            .chart-actions {
+                gap: 2px
+            }
+
+            .chart-actions .btn {
+                padding: 6px 8px;
+                font-size: 10px;
+                min-width: 28px
+            }
+        }
+
+        /* 按钮样式已移至 common-styles.css */
+
+        .chart-wrap {
+            height: 340px;
+            position: relative
+        }
+
+        canvas {
+            background: transparent;
+            border-radius: 12px
+        }
+
+        /* 图表右下角半全屏按钮 */
+        .fullscreen-btn {
+            position: absolute;
+            right: 8px;
+            bottom: 8px;
+            z-index: 3;
+            padding: 6px 8px;
+            border-radius: 8px;
+            border: 1px solid var(--bd);
+            background: color-mix(in srgb, var(--card) 80%, black 0%);
+            color: var(--muted);
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            opacity: .9;
+            transition: all .2s ease
+        }
+
+        .fullscreen-btn:hover {
+            filter: brightness(1.1);
+            transform: translateY(-2px);
+            opacity: 1
+        }
+
+        .fullscreen-btn:active {
+            transform: translateY(0) scale(0.95)
+        }
+
+        /* 半透明全屏弹层 */
+        .overlay {
+            position: fixed;
+            inset: 0;
+            display: flex; /* 允许过渡动画 */
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, .35);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .22s ease;
+        }
+
+        .overlay.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal {
+            width: min(1200px, 92vw);
+            height: min(800px, 86vh);
+            display: flex;
+            flex-direction: column;
+            background: color-mix(in srgb, var(--card) 100%, transparent 0%);
+            border: 1px solid var(--bd);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            transform: translateY(8px) scale(.985);
+            transition: transform .25s ease;
+        }
+
+        .overlay.show .modal {
+            transform: translateY(0) scale(1);
+        }
+
+
+        .modal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--bd);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .modal-body {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .table-wrap.full {
+            max-height: none;
+            height: 100%;
+            border-radius: 0 0 var(--radius) var(--radius);
+        }
+
+        .close-btn {
+            padding: 6px 10px;
+            border: 1px solid var(--bd);
+            background: var(--card);
+            color: var(--muted);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all .2s ease
+        }
+
+        .close-btn:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px)
+        }
+
+        .close-btn:active {
+            transform: translateY(0) scale(0.98)
+        }
+
+        canvas {
+            touch-action: none;
+            overscroll-behavior: contain;
+        }
+
+        .chart-wrap {
+            overscroll-behavior: contain;
+        }
+
+        .table-card {
+            padding: 0;
+            margin-top: 12px
+        }
+
+        .table-head {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--bd);
+            display: flex;
+            justify-content: space-between;
+            align-items: center
+        }
+
+        .table-wrap {
+            max-height: 420px;
+            overflow: auto;
+            border-radius: 0 0 var(--radius) var(--radius)
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse
+        }
+
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: var(--card);
+            color: var(--muted);
+            font-weight: 700;
+            font-size: 13px;
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--bd)
+        }
+
+        tbody td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--bd);
+            font-feature-settings: "tnum";
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap
+        }
+
+        tbody tr:nth-child(even) {
+            background: color-mix(in srgb, var(--card) 90%, var(--bd))
+        }
+
+        tbody tr:hover {
+            background: color-mix(in srgb, var(--card) 80%, var(--bd))
+        }
+
+        .right {
+            text-align: right
+        }
+
+        footer {
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 12px;
+            text-align: right
+        }
+
+        /* 模态框样式已移至 common-styles.css 共享使用 */
+        /* 消息中心样式已移至 common-styles.css 共享使用 */
+        /* 启动画面样式已移至 common-styles.css 共享使用 */
+    </style>
+</head>
+<body>
+<!-- 启动画面（由 common.js 动态生成） -->
+
+<div class="wrap">
+    <header>
+        <h1>
+            <img src="../resource/logo.png" alt="Logo" class="logo">
+            <span>智能环境监测系统</span>
+        </h1>
+        <div class="status">
+            <div class="status-badge-wrapper">
+                <span class="badge clickable" id="wsStatusBadge" title="点击查看详细连接状态"><span id="wsDot" class="dot"></span><span id="wsText">未连接</span></span>
+                <!-- 连接状态详情弹窗 -->
+                <div id="statusPopup" class="status-popup popup-down">
+                    <div class="status-popup-header">
+                        <div class="status-popup-title">📡 连接状态详情</div>
+                        <div class="status-popup-close" id="statusPopupClose">✕</div>
+                    </div>
+                    <div class="status-popup-body">
+                        <div class="status-item">
+                            <div class="status-item-left">
+                                <div class="status-item-name">WebSocket 连接</div>
+                                <div class="status-item-desc">浏览器 ↔ 后端服务器</div>
+                            </div>
+                            <div class="status-item-badge" id="wsStatusDetail">
+                                <span class="status-dot"></span>
+                                <span>未连接</span>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-item-left">
+                                <div class="status-item-name">🔵 蓝牙连接 (BT27)</div>
+                                <div class="status-item-desc" id="bleStatusDesc">本地蓝牙 · 优先数据源</div>
+                            </div>
+                            <div class="status-item-badge disconnected" id="bleStatusDetail">
+                                <span class="status-dot"></span>
+                                <span>未连接</span>
+                            </div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-item-left">
+                                <div class="status-item-name">📡 MQTT 连接</div>
+                                <div class="status-item-desc" id="mqttStatusDesc">云端MQTT · 备用数据源</div>
+                            </div>
+                            <div class="status-item-badge disconnected" id="mqttStatusDetail">
+                                <span class="status-dot"></span>
+                                <span>未连接</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <span class="badge">上次更新：<span id="lastTs">--</span></span>
+            <span class="badge">样本数：<span id="count">0</span></span>
+            <div class="menu-wrapper">
+                <div class="menu-btn" id="menuBtn">
+                    <span>⚙️ 功能</span>
+                    <span style="font-size: 10px; transition: transform .2s ease" id="menuArrow">▼</span>
+                    <span class="menu-btn-badge" id="menuBtnBadge"></span>
+                </div>
+                <div class="menu-dropdown" id="menuDropdown">
+                    <a href="/analysis.html" class="menu-item" title="查看数据统计分析">
+                        <span>📈</span>
+                        <span>数据分析</span>
+                        <span class="ai-inside-badge">AI</span>
+                    </a>
+                    <div class="menu-item" id="messageCenterBtn" title="查看警告消息中心">
+                        <span>🔔</span>
+                        <span>消息中心</span>
+                        <span class="message-badge" id="messageBadge" style="display: none;">0</span>
+                    </div>
+                    <div class="menu-item" data-power-control-trigger title="省电控制">
+                        <span>🔋</span>
+                        <span>省电控制</span>
+                    </div>
+                    <div class="menu-item" id="loadDataBtn" title="加载历史数据">
+                        <span>📊</span>
+                        <span>加载数据</span>
+                    </div>
+                    <div class="menu-item" id="themeBtn" title="切换主题模式">
+                        <span>🌙</span>
+                        <span>切换主题</span>
+                    </div>
+                    <div class="menu-item" id="aboutBtn" title="关于项目">
+                        <span>ℹ️</span>
+                        <span>关于项目</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="row">
+        <div class="card" id="tempCard">
+            <div class="label-with-info">
+                <div class="label">温度</div>
+                <span class="info-btn" onclick="showInfo('temp')">i</span>
+            </div>
+            <div class="value"><span id="tempVal">--</span><span class="unit">°C</span></div>
+            <div id="tempTrend" class="trend">
+                <span class="arrow">—</span><span class="txt">趋势稳定</span>
+                <span id="temp2Display" style="margin-left: 12px; color: var(--muted); font-size: 12px;"></span>
+            </div>
+        </div>
+        <div class="card" id="tempDiffCard">
+            <div class="label-with-info">
+                <div class="label">温度 Δ</div>
+                <span class="info-btn" onclick="showInfo('tempDiff')">i</span>
+            </div>
+            <div class="value"><span id="tempDiffVal">--</span><span class="unit">°C</span></div>
+            <div id="tempDiffTrend" class="trend"><span class="arrow">—</span><span class="txt">趋势稳定</span></div>
+        </div>
+        <div class="card" id="humCard">
+            <div class="label-with-info">
+                <div class="label">湿度</div>
+                <span class="info-btn" onclick="showInfo('hum')">i</span>
+            </div>
+            <div class="value"><span id="humVal">--</span><span class="unit">%</span></div>
+            <div id="humTrend" class="trend"><span class="arrow">—</span><span class="txt">趋势稳定</span></div>
+        </div>
+        <div class="card" id="luxCard">
+            <div class="label-with-info">
+                <div class="label">亮度</div>
+                <span class="info-btn" onclick="showInfo('lux')">i</span>
+            </div>
+            <div class="value"><span id="luxVal">--</span><span class="unit">lx</span></div>
+            <div id="luxTrend" class="trend"><span class="arrow">—</span><span class="txt">趋势稳定</span></div>
+        </div>
+        <div class="card" id="smokeCard">
+            <div class="label-with-info">
+                <div class="label">烟雾浓度</div>
+                <span class="info-btn" onclick="showInfo('smoke')">i</span>
+            </div>
+            <div class="value"><span id="smokeVal">--</span><span class="unit">ppm</span></div>
+            <div id="smokeTrend" class="trend">
+                <span class="arrow">—</span><span class="txt">趋势稳定</span>
+                <span id="rsRoDisplay" style="margin-left: 12px; color: var(--muted); font-size: 12px;"></span>
+            </div>
+        </div>
+        <div class="card" id="pressureCard">
+            <div class="label-with-info">
+                <div class="label">大气压</div>
+                <span class="info-btn" onclick="showInfo('pressure')">i</span>
+            </div>
+            <div class="value"><span id="pressureVal">--</span><span class="unit">hPa</span></div>
+            <div id="pressureTrend" class="trend"><span class="arrow">—</span><span class="txt">趋势稳定</span></div>
+        </div>
+    </div>
+
+    <!-- 定位信息卡片 -->
+    <div class="card location-card" id="locationCard" style="margin-top: 0; margin-bottom: 12px;">
+        <div class="label-with-info">
+            <div class="label">📍 设备定位</div>
+            <span class="info-btn" onclick="showInfo('location')">i</span>
+        </div>
+        
+        <!-- 定位状态和坐标信息 -->
+        <div id="locationInfo" style="margin-top: 12px;">
+            <div id="locationStatus" style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <span style="font-size: 12px; color: var(--muted);">状态: </span>
+                <span id="locationStatusText" style="font-size: 12px; color: var(--muted);">未获取定位</span>
+            </div>
+            <div id="locationCoords" style="display: none; margin-bottom: 12px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; row-gap: 8px;">
+                    <div style="display: flex; flex-direction: column;">
+                        <span style="color: var(--muted); font-size: 12px; margin-bottom: 4px;">经度</span>
+                        <span id="locationLon" class="location-value" style="color: var(--text); font-weight: 900; font-size: clamp(24px, 4vw, 40px); line-height: 1;">--</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column;">
+                        <span style="color: var(--muted); font-size: 12px; margin-bottom: 4px;">纬度</span>
+                        <span id="locationLat" class="location-value" style="color: var(--text); font-weight: 900; font-size: clamp(24px, 4vw, 40px); line-height: 1;">--</span>
+                    </div>
+                    <div id="locationExtra" style="grid-column: 1 / -1; font-size: 12px; color: var(--muted); display: none; margin-top: 4px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作按钮区域 -->
+        <div style="display: flex; gap: 8px; margin-top: 12px;">
+            <button id="queryLocationBtn" class="btn" style="padding: 8px 16px; font-size: 13px; background: var(--primary); color: white; border: none; border-radius: 6px; cursor: pointer; transition: all 0.2s;">
+                📍 获取定位
+            </button>
+            <button id="toggleLocationMapBtn" class="btn" style="padding: 8px 12px; font-size: 13px; background: var(--card); color: var(--text); border: 1px solid var(--bd); border-radius: 6px; cursor: pointer; transition: all 0.2s; display: none;">
+                🗺️ 显示地图
+            </button>
+        </div>
+
+        <!-- 地图容器（可折叠） -->
+        <div id="locationMapContainer" style="margin-top: 16px; border-radius: 8px; overflow: hidden; max-height: 0; transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), padding 0.4s cubic-bezier(0.4, 0, 0.2, 1); position: relative; border: 1px solid var(--bd); opacity: 0; visibility: hidden;">
+            <div id="locationMap" style="width: 100%; height: 300px;"></div>
+            <button id="closeLocationMap" style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); color: white; border: none; border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px; z-index: 1000; transition: all 0.2s;" onmouseover="this.style.background='rgba(0,0,0,0.9)'" onmouseout="this.style.background='rgba(0,0,0,0.7)'">✕ 关闭</button>
+        </div>
+    </div>
+
+    <div class="split">
+        <div class="col">
+            <div class="chart-card">
+                <div class="chart-head">
+                    <div class="chart-title-with-info">
+                        <div style="font-weight:700;">温湿度曲线</div>
+                        <span class="info-btn" onclick="showInfo('chart-th')">i</span>
+                    </div>
+                    <div class="chart-actions">
+                        <button id="zoomInTH" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔍+
+                        </button>
+                        <button id="zoomOutTH" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔍-
+                        </button>
+                        <button id="panLeftTH" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">←
+                        </button>
+                        <button id="panRightTH" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">→
+                        </button>
+                        <button id="resetTH" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔄
+                        </button>
+                    </div>
+                </div>
+                <div class="chart-wrap">
+                    <canvas id="chartTH"></canvas>
+                    <button id="openFullChart" class="fullscreen-btn" title="半全屏查看温湿度曲线">⤢</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col">
+            <div class="chart-card">
+                <div class="chart-head">
+                    <div class="chart-title-with-info">
+                        <div style="font-weight:700;">亮度曲线</div>
+                        <span class="info-btn" onclick="showInfo('chart-lux')">i</span>
+                    </div>
+                    <div class="chart-actions">
+                        <button id="zoomInLUX" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔍+
+                        </button>
+                        <button id="zoomOutLUX" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔍-
+                        </button>
+                        <button id="panLeftLUX" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">←
+                        </button>
+                        <button id="panRightLUX" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">→
+                        </button>
+                        <button id="resetLUX" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔄
+                        </button>
+                    </div>
+                </div>
+                <div class="chart-wrap">
+                    <canvas id="chartLUX"></canvas>
+                    <button id="openFullLux" class="fullscreen-btn" title="半全屏查看亮度曲线">⤢</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col">
+            <div class="chart-card">
+                <div class="chart-head">
+                    <div class="chart-title-with-info">
+                        <div style="font-weight:700;">烟雾浓度曲线</div>
+                        <span class="info-btn" onclick="showInfo('chart-smoke')">i</span>
+                    </div>
+                    <div class="chart-actions">
+                        <button id="zoomInSMOKE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔍+
+                        </button>
+                        <button id="zoomOutSMOKE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔍-
+                        </button>
+                        <button id="panLeftSMOKE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">←
+                        </button>
+                        <button id="panRightSMOKE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">→
+                        </button>
+                        <button id="resetSMOKE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔄
+                        </button>
+                    </div>
+                </div>
+                <div class="chart-wrap">
+                    <canvas id="chartSMOKE"></canvas>
+                    <button id="openFullSmoke" class="fullscreen-btn" title="半全屏查看烟雾浓度曲线">⤢</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col">
+            <div class="chart-card">
+                <div class="chart-head">
+                    <div class="chart-title-with-info">
+                        <div style="font-weight:700;">大气压曲线</div>
+                        <span class="info-btn" onclick="showInfo('chart-pressure')">i</span>
+                    </div>
+                    <div class="chart-actions">
+                        <button id="zoomInPRESSURE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">
+                            🔍+
+                        </button>
+                        <button id="zoomOutPRESSURE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">
+                            🔍-
+                        </button>
+                        <button id="panLeftPRESSURE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">
+                            ←
+                        </button>
+                        <button id="panRightPRESSURE" class="btn"
+                                style="padding:4px 6px;font-size:11px;min-width:32px;">→
+                        </button>
+                        <button id="resetPRESSURE" class="btn" style="padding:4px 6px;font-size:11px;min-width:32px;">🔄
+                        </button>
+                    </div>
+                </div>
+                <div class="chart-wrap">
+                    <canvas id="chartPRESSURE"></canvas>
+                    <button id="openFullPressure" class="fullscreen-btn" title="半全屏查看大气压曲线">⤢</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="table-card">
+        <div class="table-head">
+            <div style="font-weight:700;">数据列表</div>
+            <div style="color:var(--muted);font-size:13px;">仅显示最近 500 条</div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th style="width:22%;">时间</th>
+                    <th class="right" style="width:13%;">温度 (°C)</th>
+                    <th class="right" style="width:13%;">湿度 (%)</th>
+                    <th class="right" style="width:13%;">亮度 (lx)</th>
+                    <th class="right" style="width:13%;">烟雾 (ppm)</th>
+                    <th class="right" style="width:13%;">大气压 (hPa)</th>
+                </tr>
+                </thead>
+                <tbody id="tbodyAll"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <footer>陈鹏旭 · 基于 STM32 和物联网的智能环境监测系统设计与实现 (<span data-latest-version>未知版本</span>)</footer>
+
+    <!-- 科普弹窗 -->
+    <div id="infoModal" class="info-modal">
+        <div class="info-content">
+            <div class="info-title">
+                <span id="infoIcon"></span>
+                <span id="infoTitle"></span>
+            </div>
+            <div class="info-body" id="infoBody"></div>
+            <button class="info-close" onclick="closeInfo()">知道了</button>
+        </div>
+    </div>
+
+    <!-- 加载数据弹窗 -->
+    <div id="loadModal" class="load-modal">
+        <div class="load-content">
+            <div class="load-title">
+                <span>📊</span>
+                <span id="loadModalTitle">选择加载方式</span>
+            </div>
+
+            <!-- 选择加载方式 -->
+            <div id="loadChoiceView">
+                <div class="load-option" onclick="showLoadForm('count')">
+                    <div class="load-option-title">
+                        <span>📝</span>
+                        <span>按最近条数加载</span>
+                    </div>
+                    <div class="load-option-desc">
+                        加载最近的N条数据记录
+                    </div>
+                </div>
+
+                <div class="load-option" onclick="showLoadForm('time')">
+                    <div class="load-option-title">
+                        <span>⏱️</span>
+                        <span>按最近时间加载</span>
+                    </div>
+                    <div class="load-option-desc">
+                        加载最近几分钟/小时/天/月的数据
+                    </div>
+                </div>
+
+                <div class="load-option" onclick="showLoadForm('range')">
+                    <div class="load-option-title">
+                        <span>📅</span>
+                        <span>自定义时间范围</span>
+                    </div>
+                    <div class="load-option-desc">
+                        选择开始和结束时间，精确加载
+                    </div>
+                </div>
+
+                <div class="load-option" onclick="showLoadAllConfirm()">
+                    <div class="load-option-title">
+                        <span>⚠️</span>
+                        <span>加载全部数据</span>
+                    </div>
+                    <div class="load-option-desc">
+                        加载数据库中的所有历史数据（可能需要较长时间）
+                    </div>
+                </div>
+            </div>
+
+            <!-- 按最近条数加载表单 -->
+            <div id="loadFormCount" class="load-form-view" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">数据条数</label>
+                    <div class="form-input-group">
+                        <input type="number" class="form-input" id="loadCountInput" placeholder="例如：1000" min="1"
+                               value="1000">
+                        <span style="color: var(--muted); font-size: 13px;">条</span>
+                    </div>
+                </div>
+                <div class="load-actions">
+                    <button class="load-btn load-btn-secondary" onclick="backToChoice()">
+                        返回
+                    </button>
+                    <button class="load-btn load-btn-primary" onclick="loadByCount()">
+                        加载数据
+                    </button>
+                </div>
+            </div>
+
+            <!-- 按时间段加载表单 -->
+            <div id="loadFormTime" class="load-form-view" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">时间数量</label>
+                    <div class="form-input-group">
+                        <input type="number" class="form-input" id="loadTimeValue" placeholder="例如：1" min="1"
+                               value="1">
+                        <select class="form-input" id="loadTimeUnit">
+                            <option value="minute">分钟</option>
+                            <option value="hour" selected>小时</option>
+                            <option value="day">天</option>
+                            <option value="month">月</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="load-actions">
+                    <button class="load-btn load-btn-secondary" onclick="backToChoice()">
+                        返回
+                    </button>
+                    <button class="load-btn load-btn-primary" onclick="loadByTime()">
+                        加载数据
+                    </button>
+                </div>
+            </div>
+
+            <!-- 自定义时间范围表单 -->
+            <div id="loadFormRange" class="load-form-view" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">开始时间</label>
+                    <input type="datetime-local" class="form-input" id="loadStartTime">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">结束时间</label>
+                    <input type="datetime-local" class="form-input" id="loadEndTime">
+                </div>
+                <div class="load-actions">
+                    <button class="load-btn load-btn-secondary" onclick="backToChoice()">
+                        返回
+                    </button>
+                    <button class="load-btn load-btn-primary" onclick="loadByRange()">
+                        加载数据
+                    </button>
+                </div>
+            </div>
+
+            <!-- 取消按钮（仅在选择界面显示） -->
+            <div class="load-actions" id="loadChoiceActions">
+                <button class="load-btn load-btn-secondary" onclick="closeLoadModal()">
+                    取消
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 消息中心弹窗 -->
+    <div id="messageCenterPanel" class="message-center-panel">
+        <div class="message-center-header">
+            <div class="message-center-title">
+                <span>🔔</span>
+                <span>消息中心</span>
+            </div>
+            <button class="message-center-close" onclick="closeMessageCenter()" title="关闭">×</button>
+        </div>
+        <div class="message-center-filters">
+            <div class="calendar-wrapper" id="calendarWrapper"></div>
+            <select id="warningTypeFilter" class="message-filter-select">
+                <option value="">全部类型</option>
+                <option value="T">温度</option>
+                <option value="H">湿度</option>
+                <option value="B">亮度</option>
+                <option value="S">PPM</option>
+                <option value="P">大气压</option>
+            </select>
+            <select id="warningStatusFilter" class="message-filter-select">
+                <option value="">全部状态</option>
+                <option value="0">未恢复</option>
+                <option value="1">已恢复</option>
+            </select>
+            <button class="message-refresh-btn" onclick="loadWarningMessages()" title="刷新">🔄</button>
+        </div>
+        <div class="message-center-body" id="messageCenterBody">
+            <div class="message-loading" id="messageLoading">加载中...</div>
+            <div class="message-empty" id="messageEmpty" style="display: none;">暂无警告消息</div>
+            <div class="message-list" id="messageList"></div>
+        </div>
+    </div>
+
+    <!-- 警告通知弹窗 -->
+    <div id="warningNotification" class="warning-notification" style="display: none;">
+        <div class="warning-notification-content">
+            <div class="warning-notification-icon">⚠️</div>
+            <div class="warning-notification-text">
+                <div class="warning-notification-title" id="warningNotificationTitle"></div>
+                <div class="warning-notification-desc" id="warningNotificationDesc"></div>
+            </div>
+            <button class="warning-notification-close" onclick="closeWarningNotification()">×</button>
+        </div>
+    </div>
+
+    <!-- 关于项目弹窗（由 common.js 动态生成） -->
+    
+    <!-- 帮助弹窗（由 common.js 动态生成） -->
+
+    <!-- 警告确认框 -->
+    <div id="confirmModal" class="confirm-modal">
+        <div class="confirm-content">
+            <div class="confirm-icon">⚠️</div>
+            <div class="confirm-title">加载全部数据</div>
+            <div class="confirm-message">
+                您即将加载数据库中的<strong>全部历史数据</strong>。<br>
+                这可能包含数千甚至数万条记录，将会：<br>
+                • 清空当前图表中的数据<br>
+                • 需要较长的加载时间<br>
+                • 可能导致页面卡顿<br><br>
+                确定要继续吗？
+            </div>
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-btn-cancel" onclick="closeConfirmModal()">
+                    取消
+                </button>
+                <button class="confirm-btn confirm-btn-danger" onclick="confirmLoadAll()">
+                    确定加载
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 数据量过大警告框 -->
+    <div id="largeDataWarningModal" class="confirm-modal">
+        <div class="confirm-content">
+            <div class="confirm-icon">⚠️</div>
+            <div class="confirm-title">数据量较大</div>
+            <div class="confirm-message" id="largeDataMessage">
+                该时间范围内有 <strong id="largeDataCount">0</strong> 条数据。<br>
+                加载大量数据可能会：<br>
+                • 需要较长的加载时间<br>
+                • 导致页面卡顿<br>
+                • 影响浏览体验<br><br>
+                <strong style="color: var(--warn);">建议：</strong><br>
+                • 缩小时间范围<br>
+                • 或使用"按条数加载"功能<br><br>
+                确定要继续加载吗？
+            </div>
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-btn-cancel" onclick="closeLargeDataWarning()">
+                    取消
+                </button>
+                <button class="confirm-btn confirm-btn-danger" onclick="confirmLargeDataLoad()">
+                    确定加载
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 半透明全屏表格弹窗 -->
+    <div id="overlay" class="overlay" aria-hidden="true">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+            <div class="modal-head">
+                <div id="modalTitle" style="font-weight:700;">温湿度放大图（实时）</div>
+                <div class="modal-actions">
+                    <button id="zoomInFull" class="btn" title="放大">🔍+</button>
+                    <button id="zoomOutFull" class="btn" title="缩小">🔍-</button>
+                    <button id="panLeftFull" class="btn" title="左移">←</button>
+                    <button id="panRightFull" class="btn" title="右移">→</button>
+                    <button id="resetFull" class="btn" title="重置">🔄</button>
+                    <button id="closeOverlay" class="close-btn" title="关闭">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="chart-wrap" style="height:100%;">
+                    <canvas id="chartTHFull"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 亮度全屏弹窗 -->
+    <div id="overlayLux" class="overlay" aria-hidden="true">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitleLux">
+            <div class="modal-head">
+                <div id="modalTitleLux" style="font-weight:700;">亮度放大图（实时）</div>
+                <div class="modal-actions">
+                    <button id="zoomInFullLux" class="btn" title="放大">🔍+</button>
+                    <button id="zoomOutFullLux" class="btn" title="缩小">🔍-</button>
+                    <button id="panLeftFullLux" class="btn" title="左移">←</button>
+                    <button id="panRightFullLux" class="btn" title="右移">→</button>
+                    <button id="resetFullLux" class="btn" title="重置">🔄</button>
+                    <button id="closeOverlayLux" class="close-btn" title="关闭">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="chart-wrap" style="height:100%;">
+                    <canvas id="chartLUXFull"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 烟雾全屏弹窗 -->
+    <div id="overlaySmoke" class="overlay" aria-hidden="true">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitleSmoke">
+            <div class="modal-head">
+                <div id="modalTitleSmoke" style="font-weight:700;">烟雾浓度放大图（实时）</div>
+                <div class="modal-actions">
+                    <button id="zoomInFullSmoke" class="btn" title="放大">🔍+</button>
+                    <button id="zoomOutFullSmoke" class="btn" title="缩小">🔍-</button>
+                    <button id="panLeftFullSmoke" class="btn" title="左移">←</button>
+                    <button id="panRightFullSmoke" class="btn" title="右移">→</button>
+                    <button id="resetFullSmoke" class="btn" title="重置">🔄</button>
+                    <button id="closeOverlaySmoke" class="close-btn" title="关闭">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="chart-wrap" style="height:100%;">
+                    <canvas id="chartSMOKEFull"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 大气压全屏弹窗 -->
+    <div id="overlayPressure" class="overlay" aria-hidden="true">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitlePressure">
+            <div class="modal-head">
+                <div id="modalTitlePressure" style="font-weight:700;">大气压放大图（实时）</div>
+                <div class="modal-actions">
+                    <button id="zoomInFullPressure" class="btn" title="放大">🔍+</button>
+                    <button id="zoomOutFullPressure" class="btn" title="缩小">🔍-</button>
+                    <button id="panLeftFullPressure" class="btn" title="左移">←</button>
+                    <button id="panRightFullPressure" class="btn" title="右移">→</button>
+                    <button id="resetFullPressure" class="btn" title="重置">🔄</button>
+                    <button id="closeOverlayPressure" class="close-btn" title="关闭">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="chart-wrap" style="height:100%;">
+                    <canvas id="chartPRESSUREFull"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+<script src="/static/changelog-data.js?v=20250205"></script>
+<script src="/static/common.js?v=20250205"></script>
+
+<script>
+    // 启动画面控制逻辑已移至 common.js 共享使用
+    // 初始化启动画面系统
+    if (typeof initSplashScreen === 'function') {
+        initSplashScreen();
+    }
+    
+    // 科普内容数据
+    const infoData = {
+        'temp': {
+            icon: '🌡️',
+            title: '温度监测',
+            content: `<p>温度是影响环境舒适度的重要参数之一。</p>
+                     <p><strong>适宜范围：</strong>一般室内温度应保持在 20-25°C 之间。</p>
+                     <p><strong>为什么重要：</strong>温度过高或过低都会影响人体舒适度和设备运行稳定性。温度波动还会影响精密仪器的准确性。</p>
+                     <p><strong>监测意义：</strong>实时监测温度变化，可以及时调整空调系统，保证环境条件的稳定性。</p>
+                     <p><strong>另一数据源：</strong>系统配备了两个温度传感器（DHT11和BMP280），"另一数据源"显示的是第二个传感器的温度读数。通过对比两个传感器的数据，可以交叉验证测量准确性，并了解不同位置的温度分布情况，提高监测的可靠性。</p>`
+        },
+        'tempDiff': {
+            icon: '📐',
+            title: '温度差值监测',
+            content: `<p>温度差值显示两个温度传感器之间的温差。</p>
+                     <p><strong>测量意义：</strong>通过对比两个位置的温度，可以了解环境温度分布的均匀性。</p>
+                     <p><strong>正常范围：</strong>同一空间内不同位置的温差通常应小于2°C，温差过大说明空调系统分布不均或存在局部热源。</p>
+                     <p><strong>应用场景：</strong>多点温度监测有助于发现温度死角，优化空调出风口位置，确保整体环境的一致性。</p>`
+        },
+        'hum': {
+            icon: '💧',
+            title: '湿度监测',
+            content: `<p>湿度反映空气中水蒸气的含量，对环境舒适度至关重要。</p>
+                     <p><strong>适宜范围：</strong>标准室内湿度应控制在 40-70% 之间。</p>
+                     <p><strong>为什么重要：</strong>湿度过高容易导致设备腐蚀、物品霉变；湿度过低则可能产生静电，影响人体舒适度和电子设备。</p>
+                     <p><strong>温湿度关系：</strong>温度和湿度相互影响，温度升高时相对湿度会降低，因此需要同时监测这两个参数。</p>`
+        },
+        'lux': {
+            icon: '💡',
+            title: '亮度监测',
+            content: `<p>亮度（照度）反映环境的光照强度，单位为勒克斯（lx）。</p>
+                     <p><strong>适宜范围：</strong>普通工作区域照度应达到 300-750 lx，精密操作区域需要 750-1500 lx。</p>
+                     <p><strong>为什么重要：</strong>充足的照明可以减少操作失误，提高工作效率；某些场景需要严格控制光照条件。</p>
+                     <p><strong>监测意义：</strong>实时监测光照可以优化照明系统，既保证工作需求又节约能源。某些物品需避光保存，亮度监测有助于判断储存环境。</p>`
+        },
+        'smoke': {
+            icon: '🔥',
+            title: '烟雾浓度监测',
+            content: `<p>烟雾浓度反映空气中可燃气体和烟雾颗粒的含量，单位为 ppm（百万分之一）。</p>
+                     <p><strong>安全阈值：</strong>正常环境应小于 50 ppm，超过 200 ppm 需要警惕，超过 500 ppm 属于危险范围。</p>
+                     <p><strong>为什么重要：</strong>这是环境安全的关键指标。有害气体或烟雾的及早发现可以防止火灾和中毒事故。</p>
+                     <p><strong>应急措施：</strong>当烟雾浓度异常升高时，系统会发出警报，应立即检查周围环境，开启通风系统，必要时疏散人员。</p>
+                     <p><strong>Rs/Ro值：</strong>这是MQ-2气体传感器的原始电阻比值（传感器电阻Rs与清洁空气中电阻R0的比值）。Rs/Ro值越小，说明气体浓度越高。这个原始数据经过转换计算后得到烟雾浓度的ppm值，显示Rs/Ro可以帮助了解传感器的工作状态和响应特性，便于校准和诊断传感器问题。</p>`
+        },
+        'mq2-control': {
+            icon: '🧯',
+            title: '为什么要单独控制 MQ2？',
+            content: `<p><strong>传感器特性：</strong>MQ-2 内部有加热丝，只有在预热十几秒后才能输出稳定曲线。</p>
+                     <p><strong>不间断通电的风险：</strong>持续高功耗（约 150mA）、线圈寿命加速衰减，以及温漂引起的误报。</p>
+                     <p><strong>供电影响：</strong>系统内置四档供电策略，默认省电（5/25），可切换为平衡（15/15）、安全（25/5）或不省电（持续供电）。模式会自动记录供电/休眠状态，方便排查。</p>
+                     <p><strong>手动控制：</strong>如需即时维护，可直接发送开启/关闭指令，等待预热完成后再观察曲线即可。</p>`
+        },
+        'chart-th': {
+            icon: '📈',
+            title: '温湿度曲线图',
+            content: `<p>温湿度曲线图同时显示温度和湿度随时间的变化趋势。</p>
+                     <p><strong>双轴显示：</strong>左侧Y轴表示温度（°C），右侧Y轴表示湿度（%），便于观察两者的相关性。</p>
+                     <p><strong>趋势分析：</strong>通过观察曲线走势，可以发现温湿度的周期性变化、突发异常等情况。例如，温度上升时湿度通常会下降。</p>
+                     <p><strong>操作技巧：</strong>可以使用放大、缩小、平移按钮查看不同时间段的数据，或按住Alt键框选区域进行放大。</p>`
+        },
+        'chart-lux': {
+            icon: '📊',
+            title: '亮度曲线图',
+            content: `<p>亮度曲线图显示环境光照强度随时间的变化。</p>
+                     <p><strong>日夜周期：</strong>通常能看到明显的日间/夜间变化规律，白天自然光线充足时亮度较高。</p>
+                     <p><strong>能耗分析：</strong>通过分析亮度曲线，可以评估照明系统的使用效率，优化开关灯时间。</p>
+                     <p><strong>数据记录：</strong>对于光敏感场景，亮度曲线可以作为环境条件的重要记录。</p>`
+        },
+        'chart-smoke': {
+            icon: '🚨',
+            title: '烟雾浓度曲线图',
+            content: `<p>烟雾浓度曲线是环境安全监测的核心工具。</p>
+                     <p><strong>基线值：</strong>正常情况下，烟雾浓度应维持在较低水平（< 50 ppm）并保持稳定。</p>
+                     <p><strong>异常识别：</strong>曲线出现突然上升表示可能有烟雾或可燃气体泄漏，需要立即查看现场情况。</p>
+                     <p><strong>事故回溯：</strong>历史数据可用于分析事故发生时间和原因，为改进安全措施提供依据。</p>
+                     <p><strong>注意：</strong>如果看到烟雾浓度持续升高，请立即采取应急措施！</p>`
+        },
+        'pressure': {
+            icon: '🌤️',
+            title: '大气压监测',
+            content: `<p>大气压是空气作用在单位面积上的力，单位为百帕（hPa）或千帕（kPa）。</p>
+                     <p><strong>标准值：</strong>海平面标准大气压约为 1013 hPa（101.3 kPa），正常范围一般在 980-1040 hPa 之间。</p>
+                     <p><strong>为什么重要：</strong>大气压影响人体舒适度、液体沸点等参数。某些场景需要记录大气压以确保环境条件的稳定性。</p>
+                     <p><strong>气象关联：</strong>大气压变化与天气变化密切相关，低压通常伴随阴雨天气，高压则多晴朗天气。</p>
+                     <p><strong>监测意义：</strong>实时监测大气压可以帮助校准精密仪器，预测天气变化，保证环境条件的准确记录。</p>`
+        },
+        'chart-pressure': {
+            icon: '📉',
+            title: '大气压曲线图',
+            content: `<p>大气压曲线显示环境气压随时间的变化趋势。</p>
+                     <p><strong>稳定性：</strong>正常情况下，室内气压应保持相对稳定，波动范围在几个百帕以内。</p>
+                     <p><strong>天气预测：</strong>气压快速下降通常预示着天气转坏，气压上升则预示天气好转。</p>
+                     <p><strong>数据校准：</strong>某些精密设备需要根据当时的气压值进行数据校准，历史曲线可作为环境记录的重要参考。</p>
+                     <p><strong>异常监测：</strong>气压突然大幅变化可能表示门窗密闭性问题或通风系统异常。</p>`
+        },
+        'location': {
+            icon: '📍',
+            title: '设备定位',
+            content: `<p>设备定位功能可以实时获取设备的精确地理位置信息。</p>
+                     <p><strong>定位方式：</strong>系统使用LBS（Location Based Service）基站定位技术，通过移动网络获取设备位置。</p>
+                     <p><strong>定位精度：</strong>LBS定位精度通常在几十到几百米范围内，适合大部分监测场景的需求。</p>
+                     <p><strong>使用场景：</strong>定位功能可以帮助您了解设备部署位置，在设备移动或异常时快速定位设备所在位置，便于维护和管理。</p>
+                     <p><strong>信号强度：</strong>CSQ值表示信号强度，数值越大表示信号越好，通常CSQ值在20以上表示信号良好。</p>
+                     <p><strong>操作说明：</strong>点击"获取定位"按钮后，系统会向设备发送定位查询命令，设备返回定位数据后会自动在地图上标记位置。</p>`
+        }
+    };
+
+    // showInfo, closeInfo 已移至 common.js
+
+    // 科普弹窗点击外部关闭（页面加载时调用）
+    window.addEventListener('load', function () {
+        setupInfoModalClickOutside();
+    });
+
+    window.addEventListener('load', function () {
+        const ZoomPlugin = window.ChartZoom || window.chartjsPluginZoom || window.zoomPlugin || window.Zoom;
+        if (ZoomPlugin) {
+            Chart.register(ZoomPlugin);
+            console.log('Chart.js zoom plugin loaded successfully');
+        } else {
+            console.error('Chart.js zoom plugin not found');
+        }
+        createCharts();
+        // 弹窗点击外部关闭功能已移至 common.js，在弹窗创建时自动设置
+    });
+
+    // 主题系统已移至 common.js (root, THEME_KEY, applyTheme 等)
+
+    // 功能菜单控制已移至 common.js 的 initFunctionMenu()
+
+    // 主题切换（页面加载后设置）
+    window.addEventListener('load', function () {
+        setupThemeToggle('themeBtn');
+    });
+
+    const wsDot = qs('#wsDot'), wsText = qs('#wsText'), lastTs = qs('#lastTs'), counter = qs('#count');
+    const tempVal = qs('#tempVal'), humVal = qs('#humVal'), luxVal = qs('#luxVal'), smokeVal = qs('#smokeVal'),
+        pressureVal = qs('#pressureVal'), tempDiffVal = qs('#tempDiffVal');
+    const tempTrend = qs('#tempTrend'), humTrend = qs('#humTrend'), luxTrend = qs('#luxTrend'),
+        smokeTrend = qs('#smokeTrend'), pressureTrend = qs('#pressureTrend'), tempDiffTrend = qs('#tempDiffTrend');
+    const temp2Display = qs('#temp2Display');
+    const rsRoDisplay = qs('#rsRoDisplay');
+    const tbodyAll = qs('#tbodyAll');
+    
+    // 获取卡片元素
+    const tempCard = qs('#tempCard');
+    const tempDiffCard = qs('#tempDiffCard');
+    const humCard = qs('#humCard');
+    const luxCard = qs('#luxCard');
+    const smokeCard = qs('#smokeCard');
+    const pressureCard = qs('#pressureCard');
+    const overlay = qs('#overlay');
+    const chartTHFullCanvas = () => qs('#chartTHFull');
+    const overlayLux = qs('#overlayLux');
+    const chartLUXFullCanvas = () => qs('#chartLUXFull');
+    const overlaySmoke = qs('#overlaySmoke');
+    const chartSMOKEFullCanvas = () => qs('#chartSMOKEFull');
+    const overlayPressure = qs('#overlayPressure');
+    const chartPRESSUREFullCanvas = () => qs('#chartPRESSUREFull');
+
+    // qs() 函数已移至 common.js
+
+    const MAX_ROWS = 500, N_TREND = 20;
+    // 图表：窗口500条，但保存更长历史用于拖动查看
+    const WINDOW_SIZE = 500;
+    const MAX_CHART_HISTORY = 50000; // 主图表最大数据量 // 防止无限增长
+    const labelsAll = [], tempsAll = [], humsAll = [], luxAll = [], smokeAll = [], pressureAll = [], temps2All = [],
+        tempDiffAll = [];
+    const timestampArray = []; // 保存每个数据点的时间戳，用于重新格式化标签
+    // 放大图历史：不做前端限制（依然受后端发送量影响）
+    const labelsFull = [], tempsFull = [], humsFull = [], temps2Full = [];
+    const labelsLuxFull = [], luxFull = [];
+    const labelsSmokeFull = [], smokeFull = [];
+    const labelsPressureFull = [], pressureFull = [];
+
+    // ✅ 统一管理：图表配置和状态
+    window.chartConfig = {
+        TH: {followLatest: true, fullChart: null},
+        LUX: {followLatest: true, fullChart: null},
+        SMOKE: {followLatest: true, fullChart: null},
+        PRESSURE: {followLatest: true, fullChart: null}
+    };
+
+    // 全屏图表实例（保留变量以便代码中引用）
+    let chartTHFull = null;
+    let chartLUXFull = null;
+    let chartSMOKEFull = null;
+    let chartPRESSUREFull = null;
+
+    // 温湿度拖动累计（将像素->索引的分数部分累积，避免小拖动无效）
+    let carryShiftTH = 0;
+
+    function setWsStatus(ok) {
+        wsDot.classList.remove('ok', 'err');
+        wsDot.classList.add(ok ? 'ok' : 'err');
+        wsText.textContent = ok ? '已连接' : '未连接'
+    }
+
+    function delta(arr) {
+        if (arr.length < 2) return 0;
+        return arr[arr.length - 1] - arr[0]
+    }
+    
+    // 更新卡片状态（根据数值显示警告/危险色）
+    function updateCardStatus(card, value, warningThreshold, dangerThreshold, isReverse = false) {
+        if (!card || value == null || isNaN(value)) {
+            card?.classList.remove('card-warning', 'card-danger');
+            return;
+        }
+        
+        card.classList.remove('card-warning', 'card-danger');
+        
+        if (isReverse) {
+            // 反向判断（如亮度、湿度下限）
+            if (value <= dangerThreshold) {
+                card.classList.add('card-danger');
+            } else if (value <= warningThreshold) {
+                card.classList.add('card-warning');
+            }
+        } else {
+            // 正向判断
+            if (value >= dangerThreshold) {
+                card.classList.add('card-danger');
+            } else if (value >= warningThreshold) {
+                card.classList.add('card-warning');
+            }
+        }
+    }
+    
+    // 湿度范围判断（双向）
+    function updateHumidityStatus(card, value) {
+        if (!card || value == null || isNaN(value)) {
+            card?.classList.remove('card-warning', 'card-danger');
+            return;
+        }
+        
+        card.classList.remove('card-warning', 'card-danger');
+        
+        // 过低或过高都警告
+        if (value < 20 || value > 80) {
+            card.classList.add('card-danger');
+        } else if (value < 30 || value > 70) {
+            card.classList.add('card-warning');
+        }
+    }
+    
+    // 气压范围判断（双向）
+    function updatePressureStatus(card, value) {
+        if (!card || value == null || isNaN(value)) {
+            card?.classList.remove('card-warning', 'card-danger');
+            return;
+        }
+        
+        card.classList.remove('card-warning', 'card-danger');
+        
+        // 过低或过高都警告
+        if (value < 995 || value > 1025) {
+            card.classList.add('card-danger');
+        } else if (value < 1000 || value > 1020) {
+            card.classList.add('card-warning');
+        }
+    }
+
+    function setTrend(ele, d, unit) {
+        ele.classList.remove('up', 'down');
+        const arrow = ele.querySelector('.arrow') || ele.appendChild(Object.assign(document.createElement('span'), {className: 'arrow'}));
+        const txt = ele.querySelector('.txt') || ele.appendChild(Object.assign(document.createElement('span'), {className: 'txt'}));
+        if (Math.abs(d) < 0.01) {
+            arrow.textContent = '—';
+            txt.textContent = '趋势稳定'
+        } else if (d > 0) {
+            ele.classList.add('up');
+            arrow.textContent = '↑';
+            txt.textContent = `上升 ${d.toFixed(2)} ${unit}`
+        } else {
+            ele.classList.add('down');
+            arrow.textContent = '↓';
+            txt.textContent = `下降 ${Math.abs(d).toFixed(2)} ${unit}`
+        }
+    }
+
+    function colorFromTemp(v) {
+        const tMin = 0, tMax = 35, p = Math.min(1, Math.max(0, (v - tMin) / (tMax - tMin)));
+        const s = getComputedStyle(document.documentElement);
+        const cold = s.getPropertyValue('--chart-line-temp-cold').trim();
+        const warm = s.getPropertyValue('--chart-line-temp-warm').trim();
+        const h2r = h => {
+            const m = h.replace('#', '');
+            return [parseInt(m.slice(0, 2), 16), parseInt(m.slice(2, 4), 16), parseInt(m.slice(4, 6), 16)]
+        }
+        const r2h = a => "#" + a.map(n => n.toString(16).padStart(2, '0')).join('');
+        const c1 = h2r(cold), c2 = h2r(warm), mix = [0, 1, 2].map(i => Math.round(c1[i] * (1 - p) + c2[i] * p));
+        return r2h(mix)
+    }
+
+    // css() 函数已移至 common.js
+
+    function makeBaseOptions() {
+        return {
+            animation: false,
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {mode: 'nearest', intersect: false, axis: 'x'},
+            hover: {mode: 'nearest', intersect: false, animationDuration: 200},
+            elements: {point: {radius: 0, hoverRadius: 5, hoverBorderWidth: 2}, line: {tension: 0.4, borderWidth: 2}},
+            scales: {
+                x: {
+                    ticks: {
+                        maxRotation: 0, // 不旋转标签
+                        autoSkip: true,
+                        autoSkipPadding: 20,
+                        maxTicksLimit: 8,
+                        callback: function(value, index, ticks) {
+                            // 如果 makeTimeLabelFormatter 可用，使用它；否则使用简单格式化
+                            if (typeof window.makeTimeLabelFormatter === 'function') {
+                                const formatter = window.makeTimeLabelFormatter();
+                                return formatter.call(this, value, index, ticks);
+                            }
+                            const label = this.getLabelForValue(value);
+                            return label || '';
+                        }
+                    },
+                    grid: {color: css('--chart-grid')}
+                },
+                y: {position: 'left', grid: {color: css('--chart-grid')}},
+                y1: {position: 'right', grid: {drawOnChartArea: false, color: css('--chart-grid')}}
+            },
+            plugins: {
+                legend: {labels: {color: css('--muted')}},
+                tooltip: {
+                    mode: 'nearest', intersect: false,
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    titleColor: '#fff', bodyColor: '#fff',
+                    borderColor: css('--bd'), borderWidth: 1, cornerRadius: 8,
+                    displayColors: true,
+                    callbacks: {
+                        title(ctx) {
+                            return '时间: ' + ctx[0].label;
+                        },
+                        label(ctx) {
+                            const label = ctx.dataset.label || '';
+                            const v = ctx.parsed.y;
+                            return label + ': ' + (Number.isFinite(v) ? v.toFixed(2) : '--');
+                        }
+                    }
+                },
+                // 插件原生缩放/平移
+                zoom: {
+                    limits: {x: {min: 'original', max: 'original'}},
+                    pan: {
+                        enabled: true,
+                        mode: 'x',
+                        threshold: 4
+                    },
+                    zoom: {
+                        wheel: {enabled: true, speed: 0.2},
+                        pinch: {
+                            enabled: true,
+                            threshold: 0.1,
+                            speed: 0.5,
+                            mode: 'x'
+                        },
+                        drag: {
+                            enabled: true,
+                            modifierKey: 'alt',
+                            backgroundColor: 'rgba(125,125,125,.12)',
+                            borderColor: 'rgba(125,125,125,.3)',
+                            threshold: 6
+                        },
+                        mode: 'x'
+                    }
+                }
+            }
+        };
+    }
+
+    // 通用单轴图表配置生成器
+    function makeSingleAxisChartOptions() {
+        const opts = makeBaseOptions();
+        opts.scales = {
+            x: {
+                ticks: {
+                    maxRotation: 0,
+                    autoSkip: true,
+                    autoSkipPadding: 20,
+                    maxTicksLimit: 8,
+                    callback: function (value, index, ticks) {
+                        const label = this.getLabelForValue(value);
+                        // 只显示时间部分，格式：HH:mm
+                        if (label && label.includes(':')) {
+                            const parts = label.split(' ');
+                            if (parts.length >= 2) {
+                                const timeParts = parts[1].split(':');
+                                return timeParts[0] + ':' + timeParts[1];
+                            }
+                        }
+                        return label;
+                    }
+                },
+                grid: {color: css('--chart-grid')}
+            },
+            y: {position: 'left', grid: {color: css('--chart-grid')}}
+        };
+        // 只禁用插件平移（保留 Alt+框选放大功能），使用自定义窗口拖动
+        if (opts?.plugins?.zoom?.pan) {
+            opts.plugins.zoom.pan.enabled = false;
+        }
+        return opts;
+    }
+
+    function createCharts() {
+        // — 温湿 —
+        const ctxTH = qs('#chartTH').getContext('2d');
+        const dataTH = {
+            labels: labelsAll, datasets: [
+                {
+                    label: '温度1 (°C)', data: tempsAll, yAxisID: 'y',
+                    borderColor: css('--chart-line-temp-warm'),
+                    pointHoverBorderColor: css('--chart-line-temp-warm')
+                },
+                {
+                    label: '温度2 (°C)', data: temps2All, yAxisID: 'y',
+                    borderColor: css('--chart-line-temp-cold'),
+                    pointHoverBorderColor: css('--chart-line-temp-cold')
+                },
+                {
+                    label: '湿度 (%)', data: humsAll, yAxisID: 'y1',
+                    borderColor: css('--chart-line-hum'),
+                    pointHoverBorderColor: css('--chart-line-hum')
+                }
+            ]
+        };
+        const optsTH = makeBaseOptions();
+        // 只禁用温湿度图的插件平移（保留 Alt+框选放大功能），使用自定义窗口拖动
+        if (optsTH?.plugins?.zoom?.pan) {
+            optsTH.plugins.zoom.pan.enabled = false;
+        }
+        window.chartTH = new Chart(ctxTH, {type: 'line', data: dataTH, options: optsTH});
+
+        // — 亮度 —
+        const ctxLUX = qs('#chartLUX').getContext('2d');
+        const dataLUX = {
+            labels: labelsAll, datasets: [
+                {
+                    label: '亮度 (lx)', data: luxAll, yAxisID: 'y',
+                    borderColor: css('--chart-line-lux'),
+                    pointHoverBorderColor: css('--chart-line-lux')
+                }
+            ]
+        };
+        window.chartLUX = new Chart(ctxLUX, {type: 'line', data: dataLUX, options: makeSingleAxisChartOptions()});
+
+        // — 烟雾 —
+        const ctxSMOKE = qs('#chartSMOKE').getContext('2d');
+        const dataSMOKE = {
+            labels: labelsAll, datasets: [
+                {
+                    label: '烟雾浓度 (ppm)', data: smokeAll, yAxisID: 'y',
+                    borderColor: css('--chart-line-smoke'),
+                    pointHoverBorderColor: css('--chart-line-smoke')
+                }
+            ]
+        };
+        window.chartSMOKE = new Chart(ctxSMOKE, {type: 'line', data: dataSMOKE, options: makeSingleAxisChartOptions()});
+
+        // — 大气压 —
+        const ctxPRESSURE = qs('#chartPRESSURE').getContext('2d');
+        const dataPRESSURE = {
+            labels: labelsAll, datasets: [
+                {
+                    label: '大气压 (hPa)', data: pressureAll, yAxisID: 'y',
+                    borderColor: css('--chart-line-pressure'),
+                    pointHoverBorderColor: css('--chart-line-pressure')
+                }
+            ]
+        };
+        window.chartPRESSURE = new Chart(ctxPRESSURE, {
+            type: 'line',
+            data: dataPRESSURE,
+            options: makeSingleAxisChartOptions()
+        });
+
+        // 阻断默认滚动链，防止页面跟着滚；双击硬重置
+        ['chartTH', 'chartLUX', 'chartSMOKE', 'chartPRESSURE'].forEach(id => {
+            const el = document.getElementById(id);
+            el.addEventListener('wheel', e => {
+                e.preventDefault();
+            }, {passive: false, capture: true});
+            el.addEventListener('dblclick', () => {
+                if (id === 'chartTH') hardReset(window.chartTH);
+                else if (id === 'chartLUX') hardReset(window.chartLUX);
+                else if (id === 'chartSMOKE') hardReset(window.chartSMOKE);
+                else if (id === 'chartPRESSURE') hardReset(window.chartPRESSURE);
+            });
+
+            // 触屏双击重置
+            let lastTouchTime = 0;
+            el.addEventListener('touchend', (e) => {
+                const currentTime = new Date().getTime();
+                if (currentTime - lastTouchTime < 300 && e.touches.length === 0) {
+                    if (id === 'chartTH') hardReset(window.chartTH);
+                    else if (id === 'chartLUX') hardReset(window.chartLUX);
+                    else if (id === 'chartSMOKE') hardReset(window.chartSMOKE);
+                    else if (id === 'chartPRESSURE') hardReset(window.chartPRESSURE);
+                }
+                lastTouchTime = currentTime;
+            });
+
+
+            // 光标提示
+            el.style.cursor = 'grab';
+            el.addEventListener('mousedown', () => {
+                el.style.cursor = 'grabbing';
+            });
+            window.addEventListener('mouseup', () => {
+                el.style.cursor = 'grab';
+            });
+        });
+
+        // ✅ 兜底：左键拖动平移（不按 Alt 时触发），不依赖插件
+        enableManualDragPan(document.getElementById('chartTH'), window.chartTH, 'TH');
+        enableManualDragPan(document.getElementById('chartLUX'), window.chartLUX, 'LUX');
+        enableManualDragPan(document.getElementById('chartSMOKE'), window.chartSMOKE, 'SMOKE');
+        enableManualDragPan(document.getElementById('chartPRESSURE'), window.chartPRESSURE, 'PRESSURE');
+
+        // 初始化窗口到最近 WINDOW_SIZE
+        const applyInitialWindow = (chart) => {
+            const N = chart?.data?.labels?.length || 0;
+            if (!N) return;
+            const s = chart.options.scales.x;
+            s.min = Math.max(0, N - WINDOW_SIZE);
+            s.max = N - 1;
+            chart.update('none');
+        };
+
+        // 等待一下确保数据加载完成后再初始化窗口
+        setTimeout(() => {
+            applyInitialWindow(window.chartTH);
+            applyInitialWindow(window.chartLUX);
+            applyInitialWindow(window.chartSMOKE);
+            applyInitialWindow(window.chartPRESSURE);
+            window.chartConfig.TH.followLatest = true;
+            window.chartConfig.LUX.followLatest = true;
+            window.chartConfig.SMOKE.followLatest = true;
+            window.chartConfig.PRESSURE.followLatest = true;
+        }, 100);
+
+        // 通用按钮绑定函数
+        function bindChartButtons(chartName, chart, configKey) {
+            qs(`#zoomIn${chartName}`)?.addEventListener('click', () => chart?.zoom(1.2));
+            qs(`#zoomOut${chartName}`)?.addEventListener('click', () => chart?.zoom(0.8));
+            qs(`#panLeft${chartName}`)?.addEventListener('click', () => {
+                if (window.chartConfig[configKey]) {
+                    window.chartConfig[configKey].followLatest = false;
+                }
+                chart?.pan({x: 120});
+            });
+            qs(`#panRight${chartName}`)?.addEventListener('click', () => {
+                chart?.pan({x: -120});
+                const s = chart?.options?.scales?.x;
+                const N = chart?.data?.labels?.length || 0;
+                if (s && N && window.chartConfig[configKey] && (s.max ?? (N - 1)) >= N - 1 - 0.5) {
+                    window.chartConfig[configKey].followLatest = true;
+                }
+            });
+            qs(`#reset${chartName}`)?.addEventListener('click', () => hardReset(chart));
+        }
+
+        // 为四个图表绑定相同的按钮逻辑
+        bindChartButtons('TH', window.chartTH, 'TH');
+        bindChartButtons('LUX', window.chartLUX, 'LUX');
+        bindChartButtons('SMOKE', window.chartSMOKE, 'SMOKE');
+        bindChartButtons('PRESSURE', window.chartPRESSURE, 'PRESSURE');
+    }
+
+    // 图表到配置的映射已移至 common.js
+
+    // —— 兜底：左键拖动平移（直接改 x.min/x.max），避免与 Alt 框选冲突 ——
+    function enableManualDragPan(canvas, chart, configKey) {
+        if (!canvas || !chart) return;
+
+        // 注册图表和其配置的映射
+        chartConfigMap.set(chart, configKey);
+
+        // 取 X 轴（兼容不同命名）
+        const getXScale = () => {
+            const sc = chart.scales || {};
+            return sc.x || sc['x-axis-0'] || Object.values(sc).find(s => s.isHorizontal?.()) || Object.values(sc)[0];
+        };
+
+        let dragging = false;
+        let lastX = 0;
+
+        function panByPixels(dxPixels) {
+            const scale = getXScale();
+            const N = chart.data.labels.length || 0;
+            if (!scale || !N) return;
+
+            // 当前窗口
+            let curMin = (chart.options.scales.x.min ?? 0);
+            let curMax = (chart.options.scales.x.max ?? (N - 1));
+            if (!Number.isFinite(curMin) || !Number.isFinite(curMax)) {
+                curMin = 0;
+                curMax = N - 1;
+            }
+
+            const range = Math.max(1, curMax - curMin);
+            const pxPerIndex = Math.max(1, (scale.right - scale.left) / range);
+            let shiftIdx = dxPixels / pxPerIndex;
+
+            let newMin = curMin + shiftIdx;
+            let newMax = curMax + shiftIdx;
+
+            if (newMin < 0) {
+                const d = -newMin;
+                newMin += d;
+                newMax += d;
+            }
+            if (newMax > N - 1) {
+                const d = newMax - (N - 1);
+                newMin -= d;
+                newMax -= d;
+            }
+
+            // 温湿度已与亮度对齐：仍使用插件/轴平移逻辑
+            chart.options.scales.x.min = newMin;
+            chart.options.scales.x.max = newMax;
+            chart.update('none');
+        }
+
+        // 鼠标事件
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.altKey || e.button !== 0) return; // Alt 是框选放大，右键不处理
+            dragging = true;
+            lastX = e.clientX;
+            canvas.style.cursor = 'grabbing';
+
+            // 确保窗口位置已初始化（防止拖动时被重置）
+            const s = chart.options?.scales?.x;
+            const N = chart.data.labels?.length || 0;
+            if (s && N && (s.min === undefined || s.max === undefined)) {
+                s.min = Math.max(0, N - WINDOW_SIZE);
+                s.max = N - 1;
+            }
+
+            // 使用配置对象设置跟随标志
+            const configKey = chartConfigMap.get(chart);
+            if (configKey && window.chartConfig[configKey]) {
+                window.chartConfig[configKey].followLatest = false;
+            }
+            e.preventDefault();
+        }, {passive: false});
+
+        window.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            const dx = e.clientX - lastX;
+            lastX = e.clientX;
+            panByPixels(-dx); // 向右拖 => 看更早数据
+            e.preventDefault();
+        }, {passive: false});
+
+        window.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            dragging = false;
+            canvas.style.cursor = 'grab';
+            // 松手时如位于最右端，则开启实时跟随
+            try {
+                const s = chart?.options?.scales?.x;
+                const N = chart?.data?.labels?.length || 0;
+                const configKey = chartConfigMap.get(chart);
+                if (s && N && configKey && window.chartConfig[configKey]) {
+                    const atRight = (s.max ?? (N - 1)) >= N - 1 - 0.5;
+                    if (atRight) window.chartConfig[configKey].followLatest = true;
+                }
+            } catch (e) {
+            }
+        });
+
+        // 触屏事件 - 只处理单指拖拽，让Chart.js处理双指缩放
+        let initialTouches = 0;
+
+        canvas.addEventListener('touchstart', (e) => {
+            initialTouches = e.touches.length;
+
+            if (e.touches.length === 1) {
+                dragging = true;
+                lastX = e.touches[0].clientX;
+
+                // 确保窗口位置已初始化（防止拖动时被重置）
+                const s = chart.options?.scales?.x;
+                const N = chart.data.labels?.length || 0;
+                if (s && N && (s.min === undefined || s.max === undefined)) {
+                    s.min = Math.max(0, N - WINDOW_SIZE);
+                    s.max = N - 1;
+                }
+
+                // 使用配置对象设置跟随标志
+                const configKey = chartConfigMap.get(chart);
+                if (configKey && window.chartConfig[configKey]) {
+                    window.chartConfig[configKey].followLatest = false;
+                }
+            }
+        }, {passive: true});
+
+        window.addEventListener('touchmove', (e) => {
+            // 只在单指时处理拖拽，双指时让Chart.js处理缩放
+            if (initialTouches === 1 && dragging && e.touches.length === 1) {
+                const dx = e.touches[0].clientX - lastX;
+                lastX = e.touches[0].clientX;
+                panByPixels(-dx);
+                e.preventDefault();
+            }
+        }, {passive: false});
+
+        window.addEventListener('touchend', (e) => {
+            if (dragging && initialTouches === 1) {
+                dragging = false;
+            }
+            // 触摸结束时同样检查是否到达最右端
+            try {
+                const s = chart?.options?.scales?.x;
+                const N = chart?.data?.labels?.length || 0;
+                const configKey = chartConfigMap.get(chart);
+                if (s && N && configKey && window.chartConfig[configKey]) {
+                    const atRight = (s.max ?? (N - 1)) >= N - 1 - 0.5;
+                    if (atRight) window.chartConfig[configKey].followLatest = true;
+                }
+            } catch (e) {
+            }
+        });
+    }
+
+    // 硬重置：resetZoom + 清除 min/max + 开启跟随
+    function hardReset(chart) {
+        if (!chart) return;
+        try {
+            chart.resetZoom?.();
+        } catch (e) {
+        }
+        if (chart.options?.scales?.x) {
+            chart.options.scales.x.min = undefined;
+            chart.options.scales.x.max = undefined;
+        }
+        if (chart.options?.scales?.y) {
+            chart.options.scales.y.min = undefined;
+            chart.options.scales.y.max = undefined;
+        }
+
+        // 重置后开启跟随最新数据
+        const configKey = chartConfigMap.get(chart);
+        if (configKey && window.chartConfig[configKey]) {
+            window.chartConfig[configKey].followLatest = true;
+        }
+
+        chart.update('none');
+    }
+
+    function disableDragAndPanFor(chart) {
+        if (!chart) return;
+        const opts = chart.options?.plugins?.zoom;
+        if (opts) {
+            // 彻底关闭平移与拖拽缩放
+            if (opts.pan) opts.pan.enabled = false;
+            if (opts.zoom?.drag) opts.zoom.drag.enabled = false;
+        }
+        // 也移除我们兜底的手动拖动
+        // 方式：给 canvas 设置不可拖动的 cursor，并不再注册事件（放大图不会调用 enableManualDragPan）
+        try {
+            chart.canvas.style.cursor = 'default';
+        } catch (e) {
+        }
+    }
+
+    window.updateChartColors = function () {
+        if (!window.chartTH || !window.chartLUX || !window.chartSMOKE || !window.chartPRESSURE) return;
+        try {
+            const s = css('--chart-grid');
+            window.chartTH.options.scales.x.grid.color = s;
+            window.chartTH.options.scales.y.grid.color = s;
+            window.chartTH.options.scales.y1.grid.color = s;
+
+            // 设置温度和湿度线条的图例颜色（使用CSS变量）
+            window.chartTH.data.datasets[0].borderColor = css('--chart-line-temp-warm');
+            window.chartTH.data.datasets[1].borderColor = css('--chart-line-temp-cold');
+            window.chartTH.data.datasets[2].borderColor = css('--chart-line-hum');
+            window.chartTH.update('none');
+
+            window.chartLUX.options.scales.x.grid.color = s;
+            window.chartLUX.options.scales.y.grid.color = s;
+            window.chartLUX.data.datasets[0].borderColor = css('--chart-line-lux');
+            window.chartLUX.update('none');
+
+            window.chartSMOKE.options.scales.x.grid.color = s;
+            window.chartSMOKE.options.scales.y.grid.color = s;
+            window.chartSMOKE.data.datasets[0].borderColor = css('--chart-line-smoke');
+            window.chartSMOKE.update('none');
+
+            window.chartPRESSURE.options.scales.x.grid.color = s;
+            window.chartPRESSURE.options.scales.y.grid.color = s;
+            window.chartPRESSURE.data.datasets[0].borderColor = css('--chart-line-pressure');
+            window.chartPRESSURE.update('none');
+
+            if (window.chartTHFull) {
+                window.chartTHFull.options.scales.x.grid.color = s;
+                window.chartTHFull.options.scales.y.grid.color = s;
+                window.chartTHFull.options.scales.y1.grid.color = s;
+                window.chartTHFull.data.datasets[0].borderColor = css('--chart-line-temp-warm');
+                window.chartTHFull.data.datasets[1].borderColor = css('--chart-line-temp-cold');
+                window.chartTHFull.data.datasets[2].borderColor = css('--chart-line-hum');
+                window.chartTHFull.update('none');
+            }
+            if (window.chartLUXFull) {
+                window.chartLUXFull.options.scales.x.grid.color = s;
+                window.chartLUXFull.options.scales.y.grid.color = s;
+                window.chartLUXFull.data.datasets[0].borderColor = css('--chart-line-lux');
+                window.chartLUXFull.update('none');
+            }
+            if (window.chartSMOKEFull) {
+                window.chartSMOKEFull.options.scales.x.grid.color = s;
+                window.chartSMOKEFull.options.scales.y.grid.color = s;
+                window.chartSMOKEFull.data.datasets[0].borderColor = css('--chart-line-smoke');
+                window.chartSMOKEFull.update('none');
+            }
+            if (window.chartPRESSUREFull) {
+                window.chartPRESSUREFull.options.scales.x.grid.color = s;
+                window.chartPRESSUREFull.options.scales.y.grid.color = s;
+                window.chartPRESSUREFull.data.datasets[0].borderColor = css('--chart-line-pressure');
+                window.chartPRESSUREFull.update('none');
+            }
+        } catch (e) {
+        }
+    };
+    (function initTheme() {
+        const saved = localStorage.getItem(THEME_KEY) || 'auto';
+        applyTheme(saved);
+        setTimeout(() => {
+            matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+                if ((localStorage.getItem(THEME_KEY) || 'auto') === 'auto') {
+                    setTimeout(() => window.updateChartColors(), 100);
+                }
+            });
+        }, 1000);
+    })();
+
+    const ro = new ResizeObserver(() => {
+        if (window.chartTH && typeof window.chartTH.resize === 'function') window.chartTH.resize();
+        if (window.chartLUX && typeof window.chartLUX.resize === 'function') window.chartLUX.resize();
+        if (window.chartSMOKE && typeof window.chartSMOKE.resize === 'function') window.chartSMOKE.resize();
+        if (window.chartPRESSURE && typeof window.chartPRESSURE.resize === 'function') window.chartPRESSURE.resize();
+    });
+    const split = document.querySelector('.split');
+    if (split) ro.observe(split);
+
+    function addRow(ts, t, h, lx, sm, pr, t2, rs_ro) {
+        // 检查时间戳，防止添加旧数据（但允许初始数据）
+        if (lastDataTimestamp > 0 && ts <= lastDataTimestamp) {
+            console.warn(`⏭️ [时间戳检查] 跳过旧数据: ${new Date(ts * 1000).toLocaleString()} (时间戳: ${ts}) <= 最新: ${new Date(lastDataTimestamp * 1000).toLocaleString()} (${lastDataTimestamp})`);
+            return;
+        }
+
+        tempVal.textContent = t.toFixed(2);
+        humVal.textContent = h.toFixed(2);
+        luxVal.textContent = (lx == null ? '--' : lx.toFixed(1));
+        smokeVal.textContent = (sm == null ? '--' : sm.toFixed(1));
+        pressureVal.textContent = (pr == null ? '--' : pr.toFixed(1));
+
+        // 更新temp2显示和温差
+        let diff = 0;
+        if (t2 != null) {
+            temp2Display.textContent = `另一数据源：${t2.toFixed(2)}℃`;
+            diff = Math.abs(t - t2);
+            tempDiffVal.textContent = diff.toFixed(2);
+        } else {
+            temp2Display.textContent = '';
+            tempDiffVal.textContent = '--';
+        }
+
+        // 更新Rs/Ro显示
+        if (rs_ro != null) {
+            rsRoDisplay.textContent = `Rs/Ro：${rs_ro.toFixed(2)}`;
+        } else {
+            rsRoDisplay.textContent = '';
+        }
+
+        lastTs.textContent = new Date(ts * 1000).toLocaleTimeString();
+        counter.textContent = String(parseInt(counter.textContent || '0', 10) + 1);
+        
+        // 更新卡片状态颜色
+        updateCardStatus(tempCard, t, 25, 30);                    // 温度：>25°C 警告，>30°C 危险
+        updateCardStatus(tempDiffCard, diff, 2, 3);               // 温差：>2°C 警告，>3°C 危险
+        updateHumidityStatus(humCard, h);                         // 湿度：<40或>70 警告，<20或>80 危险
+        updateCardStatus(luxCard, lx, 200, 100, true);            // 亮度：<200lx 警告，<100lx 危险（反向）
+        updateCardStatus(smokeCard, sm, 20, 50);                  // 烟雾：>20ppm 警告，>50ppm 危险
+        updatePressureStatus(pressureCard, pr);                   // 气压：双向判断
+
+        // 更新时间戳跟踪器
+        if (window.timeStampTracker) {
+            window.timeStampTracker.update(ts);
+        }
+        if (ts > lastDataTimestamp) {
+            lastDataTimestamp = ts;
+        }
+        
+        // 保存时间戳
+        timestampArray.push(ts);
+        
+        // 使用formatTimeLabel格式化标签，如果不存在则使用兜底函数
+        const formatFunc = (typeof window.formatTimeLabel === 'function') ? window.formatTimeLabel : function(ts) {
+            // 兜底：如果没有formatTimeLabel，使用基本日期格式
+            if (!ts || ts <= 0) return '';
+            const date = new Date(ts * 1000);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const dataDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            const isNotToday = dataDate.getTime() !== today.getTime();
+            
+            // 如果不是今天，显示日期+时间；如果是今天，只显示时间
+            if (isNotToday) {
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hour = String(date.getHours()).padStart(2, '0');
+                const minute = String(date.getMinutes()).padStart(2, '0');
+                return `${month}-${day} ${hour}:${minute}`;
+            } else {
+                return date.toLocaleTimeString('zh-CN', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+            }
+        };
+        const label = formatFunc(ts);
+        labelsAll.push(label);
+        tempsAll.push(t);
+        humsAll.push(h);
+        luxAll.push(lx == null ? NaN : lx);
+        smokeAll.push(sm == null ? NaN : sm);
+        pressureAll.push(pr == null ? NaN : pr);
+        temps2All.push(t2 == null ? NaN : t2);
+        tempDiffAll.push(t2 == null ? NaN : diff);
+
+        // 更新最后的时间戳（已在上面更新）
+        if (labelsAll.length > MAX_CHART_HISTORY) {
+            labelsAll.shift();
+            tempsAll.shift();
+            humsAll.shift();
+            luxAll.shift();
+            smokeAll.shift();
+            pressureAll.shift();
+            temps2All.shift();
+            tempDiffAll.shift();
+            timestampArray.shift();
+        }
+
+        // 更新图表数据并根据跟随状态决定窗口位置
+        const updateChart = (chart, followFlag, chartName) => {
+            if (!chart?.options?.scales?.x) return;
+            const N = chart.data.labels.length || 0;
+            if (!N) return;
+
+            const s = chart.options.scales.x;
+
+            if (followFlag) {
+                // 跟随模式：对齐到最新数据
+                s.min = Math.max(0, N - WINDOW_SIZE);
+                s.max = N - 1;
+            } else {
+                // 非跟随模式：保存并恢复当前窗口位置
+                const currentMin = s.min;
+                const currentMax = s.max;
+
+                // 如果窗口位置未初始化，才设置到最新
+                if (currentMin === undefined || currentMax === undefined) {
+                    s.min = Math.max(0, N - WINDOW_SIZE);
+                    s.max = N - 1;
+                } else {
+                    // 明确保持当前位置（防止 Chart.js 自动调整）
+                    s.min = currentMin;
+                    s.max = currentMax;
+
+                    // 只在窗口超出范围时才调整
+                    if (s.max > N - 1) {
+                        const range = s.max - s.min;
+                        s.max = N - 1;
+                        s.min = Math.max(0, s.max - range);
+                    }
+                }
+            }
+
+            chart.update('none');
+        };
+
+        // 统一：温湿度也使用全历史 + 轴窗口跟随
+        if (window.chartTH?.data) {
+            window.chartTH.data.labels = labelsAll;
+            if (window.chartTH.data.datasets?.[0]) window.chartTH.data.datasets[0].data = tempsAll;
+            if (window.chartTH.data.datasets?.[1]) window.chartTH.data.datasets[1].data = temps2All;
+            if (window.chartTH.data.datasets?.[2]) window.chartTH.data.datasets[2].data = humsAll;
+            updateChart(window.chartTH, window.chartConfig.TH.followLatest, 'TH');
+        }
+        if (window.chartLUX?.data) {
+            window.chartLUX.data.labels = labelsAll;
+            if (window.chartLUX.data.datasets?.[0]) window.chartLUX.data.datasets[0].data = luxAll;
+            updateChart(window.chartLUX, window.chartConfig.LUX.followLatest, 'LUX');
+        }
+        if (window.chartSMOKE?.data) {
+            window.chartSMOKE.data.labels = labelsAll;
+            if (window.chartSMOKE.data.datasets?.[0]) window.chartSMOKE.data.datasets[0].data = smokeAll;
+            updateChart(window.chartSMOKE, window.chartConfig.SMOKE.followLatest, 'SMOKE');
+        }
+        if (window.chartPRESSURE?.data) {
+            window.chartPRESSURE.data.labels = labelsAll;
+            if (window.chartPRESSURE.data.datasets?.[0]) window.chartPRESSURE.data.datasets[0].data = pressureAll;
+            updateChart(window.chartPRESSURE, window.chartConfig.PRESSURE.followLatest, 'PRESSURE');
+        }
+
+        const rowData = [new Date(ts * 1000).toLocaleString(), t.toFixed(2), h.toFixed(2), (lx == null ? '--' : lx.toFixed(1)), (sm == null ? '--' : sm.toFixed(1)), (pr == null ? '--' : pr.toFixed(1))];
+        const tr = document.createElement('tr');
+        rowData.forEach((v, i) => {
+            const td = document.createElement('td');
+            td.textContent = v;
+            if (i > 0) td.classList.add('right');
+            tr.appendChild(td);
+        });
+        tbodyAll.prepend(tr);
+        while (tbodyAll.rows.length > MAX_ROWS) tbodyAll.deleteRow(-1);
+
+        // 放大图数据（无限制）
+        labelsFull.push(label);
+        tempsFull.push(t);
+        humsFull.push(h);
+        temps2Full.push(t2 == null ? NaN : t2);
+        if (chartTHFull) chartTHFull.update('none');
+
+        labelsLuxFull.push(label);
+        luxFull.push(lx == null ? NaN : lx);
+        if (chartLUXFull) chartLUXFull.update('none');
+
+        labelsSmokeFull.push(label);
+        smokeFull.push(sm == null ? NaN : sm);
+        if (chartSMOKEFull) chartSMOKEFull.update('none');
+
+        labelsPressureFull.push(label);
+        pressureFull.push(pr == null ? NaN : pr);
+        if (chartPRESSUREFull) chartPRESSUREFull.update('none');
+
+        const tS = tempsAll.slice(-N_TREND), hS = humsAll.slice(-N_TREND),
+            lS = luxAll.slice(-N_TREND).filter(x => !Number.isNaN(x)),
+            sS = smokeAll.slice(-N_TREND).filter(x => !Number.isNaN(x)),
+            pS = pressureAll.slice(-N_TREND).filter(x => !Number.isNaN(x)),
+            dS = tempDiffAll.slice(-N_TREND).filter(x => !Number.isNaN(x));
+        setTrend(tempTrend, delta(tS), '°C');
+        setTrend(humTrend, delta(hS), '%');
+        if (dS.length >= 2) setTrend(tempDiffTrend, delta(dS), '°C');
+        if (lS.length >= 2) setTrend(luxTrend, delta(lS), 'lx');
+        if (sS.length >= 2) setTrend(smokeTrend, delta(sS), 'ppm');
+        if (pS.length >= 2) setTrend(pressureTrend, delta(pS), 'hPa');
+    }
+
+    let wsock;
+    let historyLoaded = false;
+    let isLoadingHistory = false; // 标记是否正在加载历史数据
+    let lastDataTimestamp = 0; // 记录最后一条数据的时间戳，防止时间轴错乱
+
+    // 清空所有图表数据
+    function clearAllData() {
+        console.log('🗑️ 清空现有数据...');
+
+        // 清空主图表数据
+        labelsAll.length = 0;
+        tempsAll.length = 0;
+        humsAll.length = 0;
+        luxAll.length = 0;
+        smokeAll.length = 0;
+        pressureAll.length = 0;
+        temps2All.length = 0;
+        tempDiffAll.length = 0;
+        timestampArray.length = 0;
+
+        // 清空放大图数据
+        labelsFull.length = 0;
+        tempsFull.length = 0;
+        humsFull.length = 0;
+        temps2Full.length = 0;
+        labelsLuxFull.length = 0;
+        luxFull.length = 0;
+        labelsSmokeFull.length = 0;
+        smokeFull.length = 0;
+        labelsPressureFull.length = 0;
+        pressureFull.length = 0;
+
+        // 清空表格
+        const tbodyAll = qs('#tbodyAll');
+        if (tbodyAll) {
+            tbodyAll.innerHTML = '';
+        }
+
+        // 重置计数器
+        const countSpan = qs('#count');
+        if (countSpan) countSpan.textContent = '0';
+
+        // 重置时间戳
+        lastDataTimestamp = 0;
+        if (window.timeStampTracker) {
+            window.timeStampTracker.reset();
+        }
+
+        console.log('✅ 数据已清空');
+    }
+
+    // 批量添加数据（不触发图表更新，不添加表格）
+    function addRowBatch(ts, t, h, lx, sm, pr, t2) {
+        // 更新时间戳跟踪器
+        if (window.timeStampTracker) {
+            window.timeStampTracker.update(ts);
+        }
+        if (ts > lastDataTimestamp) {
+            lastDataTimestamp = ts;
+        }
+        
+        // 保存时间戳
+        timestampArray.push(ts);
+        
+        // 使用formatTimeLabel格式化标签，如果不存在则使用兜底函数
+        const formatFunc = (typeof window.formatTimeLabel === 'function') ? window.formatTimeLabel : function(ts) {
+            // 兜底：如果没有formatTimeLabel，使用基本日期格式
+            if (!ts || ts <= 0) return '';
+            const date = new Date(ts * 1000);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const dataDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            const isNotToday = dataDate.getTime() !== today.getTime();
+            
+            // 如果不是今天，显示日期+时间；如果是今天，只显示时间
+            if (isNotToday) {
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hour = String(date.getHours()).padStart(2, '0');
+                const minute = String(date.getMinutes()).padStart(2, '0');
+                return `${month}-${day} ${hour}:${minute}`;
+            } else {
+                return date.toLocaleTimeString('zh-CN', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+            }
+        };
+        const label = formatFunc(ts);
+
+        // 计算温差
+        const diff = (t2 != null) ? Math.abs(t - t2) : NaN;
+
+        // 只添加到数组，不更新图表
+        labelsAll.push(label);
+        tempsAll.push(t);
+        humsAll.push(h);
+        luxAll.push(lx == null ? NaN : lx);
+        smokeAll.push(sm == null ? NaN : sm);
+        pressureAll.push(pr == null ? NaN : pr);
+        temps2All.push(t2 == null ? NaN : t2);
+        tempDiffAll.push(diff);
+
+        // 限制主图数据量
+        if (labelsAll.length > MAX_CHART_HISTORY) {
+            labelsAll.shift();
+            tempsAll.shift();
+            humsAll.shift();
+            luxAll.shift();
+            smokeAll.shift();
+            pressureAll.shift();
+            temps2All.shift();
+            tempDiffAll.shift();
+            timestampArray.shift();
+        }
+
+        // 添加到放大图数据
+        labelsFull.push(label);
+        tempsFull.push(t);
+        humsFull.push(h);
+        temps2Full.push(t2 == null ? NaN : t2);
+        labelsLuxFull.push(label);
+        luxFull.push(lx == null ? NaN : lx);
+        labelsSmokeFull.push(label);
+        smokeFull.push(sm == null ? NaN : sm);
+        labelsPressureFull.push(label);
+        pressureFull.push(pr == null ? NaN : pr);
+    }
+
+    // 从数据库加载历史数据
+    // 如果提供了preloadedData，直接使用；否则从API获取
+    async function loadHistoryData(limit = 1000, clearFirst = false, customUrl = null, preloadedData = null) {
+        try {
+            // 确保格式化函数已加载（如果common.js还没加载完成，等待一下）
+            let formatTimeLabelFunc = window.formatTimeLabel;
+            if (!formatTimeLabelFunc || typeof formatTimeLabelFunc !== 'function') {
+                console.warn('⚠️ formatTimeLabel 函数尚未加载，等待 common.js 加载...');
+                // 等待最多 1 秒
+                for (let i = 0; i < 10 && (!formatTimeLabelFunc || typeof formatTimeLabelFunc !== 'function'); i++) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    formatTimeLabelFunc = window.formatTimeLabel;
+                }
+                if (!formatTimeLabelFunc || typeof formatTimeLabelFunc !== 'function') {
+                    console.error('❌ formatTimeLabel 函数加载失败，将使用基本格式化函数');
+                    // 创建一个基本的格式化函数作为兜底
+                    formatTimeLabelFunc = (timestamp) => {
+                        if (!timestamp || timestamp <= 0) return '';
+                        const date = new Date(timestamp * 1000);
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const day = String(date.getDate()).padStart(2, '0');
+                        const hour = String(date.getHours()).padStart(2, '0');
+                        const minute = String(date.getMinutes()).padStart(2, '0');
+                        const second = String(date.getSeconds()).padStart(2, '0');
+                        return `${month}-${day} ${hour}:${minute}:${second}`;
+                    };
+                } else {
+                    console.log('✅ formatTimeLabel 函数已加载');
+                }
+            }
+            
+            // 设置加载标志，阻止WebSocket添加数据
+            isLoadingHistory = true;
+            console.log('🔒 已暂停接收实时数据');
+
+            // 如果需要清空数据（重新加载时）
+            if (clearFirst) {
+                clearAllData();
+            }
+
+            let result;
+            let fetchTime = 0; // 初始化fetchTime
+
+            if (preloadedData) {
+                // 使用预加载的数据（从common.js的数据加载器获取）
+                console.log('📦 使用预加载数据:', preloadedData.length, '条');
+                result = {
+                    success: true,
+                    data: preloadedData,
+                    count: preloadedData.length
+                };
+            } else {
+                // 自己从API获取数据
+                const url = customUrl || (limit === -1 ? '/api/history?limit=-1' : `/api/history?limit=${limit}`);
+                console.log('🔄 正在从数据库加载历史数据...');
+                console.log('📡 请求地址:', url);
+
+                const startTime = performance.now();
+
+                const response = await fetch(url, {
+                    cache: 'no-cache',
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                });
+
+                console.log('📥 响应状态:', response.status, response.statusText);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP错误：${response.status}`);
+                }
+
+                result = await response.json();
+                fetchTime = performance.now() - startTime;
+                console.log(`📦 收到数据: ${result.count} 条 (耗时 ${fetchTime.toFixed(0)}ms)`);
+            }
+
+            if (result.success && result.data && result.data.length > 0) {
+                // 检查是否使用了聚合
+                const isAggregated = result.aggregated === true;
+                const originalCount = result.original_count || result.count;
+                const interval = result.interval;
+                
+                if (isAggregated) {
+                    const intervalText = interval >= 3600 ? `${interval / 3600}小时` : 
+                                        interval >= 60 ? `${interval / 60}分钟` : `${interval}秒`;
+                    console.log(`✅ 成功加载 ${result.count} 条聚合数据（原始数据 ${originalCount} 条，聚合间隔：${intervalText}）`);
+                    console.log(`📊 数据已优化，从 ${originalCount} 条聚合到 ${result.count} 条，提升性能`);
+                } else {
+                    console.log(`✅ 成功加载 ${result.count} 条历史数据`);
+                }
+                console.log('📊 开始批量渲染数据...');
+
+                const renderStart = performance.now();
+                let renderError = null; // 记录渲染过程中的错误
+
+                try {
+                    // 先更新所有时间戳跟踪器（用于正确计算时间跨度）
+                    if (window.timeStampTracker) {
+                        result.data.forEach(msg => {
+                            if (msg.type === 'reading' && msg.ts) {
+                                window.timeStampTracker.update(msg.ts);
+                            }
+                        });
+                        console.log('📅 时间戳跟踪器已更新，时间跨度：', window.timeStampTracker.getTimeSpan(), '秒');
+                    }
+
+                    // 批量添加数据到数组（不更新图表和表格）
+                    result.data.forEach(msg => {
+                        if (msg.type === 'reading') {
+                            addRowBatch(msg.ts, msg.temp, msg.hum, msg.lux, msg.smoke, msg.pressure, msg.temp2, msg.rs_ro);
+                        }
+                    });
+
+                    // 重新格式化所有标签（因为现在时间跨度已经正确计算了）
+                    // 重要：必须重新格式化所有标签，确保显示正确的日期格式
+                    // 使用之前准备好的格式化函数
+                    const formatFunc = formatTimeLabelFunc || window.formatTimeLabel;
+                    
+                    if (formatFunc && typeof formatFunc === 'function' && timestampArray.length > 0 && labelsAll.length === timestampArray.length) {
+                        const timeSpan = window.timeStampTracker ? window.timeStampTracker.getTimeSpan() : 0;
+                        console.log('🔄 重新格式化标签以显示日期...');
+                        console.log('📅 时间跨度：', timeSpan, '秒（', (timeSpan / 86400).toFixed(2), '天）');
+                        console.log('📊 标签数量：', labelsAll.length, '，时间戳数量：', timestampArray.length);
+                        
+                        // 重新格式化所有标签
+                        for (let i = 0; i < labelsAll.length && i < timestampArray.length; i++) {
+                            labelsAll[i] = formatFunc(timestampArray[i]);
+                        }
+                        
+                        // 同时更新全屏图表的标签
+                        if (labelsFull.length === timestampArray.length) {
+                            for (let i = 0; i < labelsFull.length && i < timestampArray.length; i++) {
+                                labelsFull[i] = formatFunc(timestampArray[i]);
+                                if (i < labelsLuxFull.length) labelsLuxFull[i] = formatFunc(timestampArray[i]);
+                                if (i < labelsSmokeFull.length) labelsSmokeFull[i] = formatFunc(timestampArray[i]);
+                                if (i < labelsPressureFull.length) labelsPressureFull[i] = formatFunc(timestampArray[i]);
+                            }
+                        }
+                        
+                        // 显示前几个标签的格式，用于调试
+                        if (labelsAll.length > 0) {
+                            console.log('📋 标签格式化示例（前5个）：');
+                            for (let i = 0; i < Math.min(5, labelsAll.length); i++) {
+                                console.log(`  [${i}]: "${labelsAll[i]}" (时间戳: ${new Date(timestampArray[i] * 1000).toLocaleString()})`);
+                            }
+                        }
+                        console.log('✅ 标签重新格式化完成');
+                    } else {
+                        console.warn('⚠️ 无法重新格式化标签：', {
+                            hasFormatter: typeof window.formatTimeLabel === 'function',
+                            formatFuncExists: !!formatFunc,
+                            labelsLength: labelsAll.length,
+                            timestampLength: timestampArray.length,
+                            lengthsMatch: labelsAll.length === timestampArray.length
+                        });
+                        // 如果 formatTimeLabel 不存在，使用兜底函数
+                        if (!formatFunc || typeof formatFunc !== 'function') {
+                            console.log('⚠️ formatTimeLabel 函数未找到，使用基本时间格式');
+                            if (formatTimeLabelFunc && typeof formatTimeLabelFunc === 'function') {
+                                // 使用之前准备好的兜底函数
+                                for (let i = 0; i < Math.min(labelsAll.length, timestampArray.length); i++) {
+                                    labelsAll[i] = formatTimeLabelFunc(timestampArray[i]);
+                                }
+                                // 同时更新全屏图表标签
+                                if (labelsFull.length === timestampArray.length) {
+                                    for (let i = 0; i < Math.min(labelsFull.length, timestampArray.length); i++) {
+                                        labelsFull[i] = formatTimeLabelFunc(timestampArray[i]);
+                                        if (i < labelsLuxFull.length) labelsLuxFull[i] = formatTimeLabelFunc(timestampArray[i]);
+                                        if (i < labelsSmokeFull.length) labelsSmokeFull[i] = formatTimeLabelFunc(timestampArray[i]);
+                                        if (i < labelsPressureFull.length) labelsPressureFull[i] = formatTimeLabelFunc(timestampArray[i]);
+                                    }
+                                }
+                            } else {
+                                // 最后的兜底：基本格式化
+                                for (let i = 0; i < Math.min(labelsAll.length, timestampArray.length); i++) {
+                                    const date = new Date(timestampArray[i] * 1000);
+                                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                                    const day = String(date.getDate()).padStart(2, '0');
+                                    const hour = String(date.getHours()).padStart(2, '0');
+                                    const minute = String(date.getMinutes()).padStart(2, '0');
+                                    labelsAll[i] = `${month}-${day} ${hour}:${minute}`;
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('⚠️ 数据处理阶段出错（但数据已加载）:', error);
+                    renderError = error;
+                }
+
+                // 图表更新部分单独处理错误，避免影响整体流程
+                try {
+                    // 一次性更新所有图表
+                    if (window.chartTH?.data) {
+                        window.chartTH.data.labels = labelsAll;
+                        if (window.chartTH.data.datasets?.[0]) window.chartTH.data.datasets[0].data = tempsAll;
+                        if (window.chartTH.data.datasets?.[1]) window.chartTH.data.datasets[1].data = temps2All;
+                        if (window.chartTH.data.datasets?.[2]) window.chartTH.data.datasets[2].data = humsAll;
+                        window.chartTH.update('none');
+                    }
+                    if (window.chartLUX?.data) {
+                        window.chartLUX.data.labels = labelsAll;
+                        if (window.chartLUX.data.datasets?.[0]) window.chartLUX.data.datasets[0].data = luxAll;
+                        window.chartLUX.update('none');
+                    }
+                    if (window.chartSMOKE?.data) {
+                        window.chartSMOKE.data.labels = labelsAll;
+                        if (window.chartSMOKE.data.datasets?.[0]) window.chartSMOKE.data.datasets[0].data = smokeAll;
+                        window.chartSMOKE.update('none');
+                    }
+                    if (window.chartPRESSURE?.data) {
+                        window.chartPRESSURE.data.labels = labelsAll;
+                        if (window.chartPRESSURE.data.datasets?.[0]) window.chartPRESSURE.data.datasets[0].data = pressureAll;
+                        window.chartPRESSURE.update('none');
+                    }
+                } catch (error) {
+                    console.error('⚠️ 图表更新时出错（但数据已加载）:', error);
+                    renderError = error;
+                }
+
+                // 表格更新部分单独处理错误
+                try {
+                    // 批量更新表格（只显示最后100条，倒序显示）
+                    const tbodyAll = qs('#tbodyAll');
+                    if (tbodyAll) {
+                        // 清空表格
+                        tbodyAll.innerHTML = '';
+                        // 取最后100条数据，倒序显示（最新的在上面）
+                        const startIdx = Math.max(0, result.data.length - MAX_ROWS);
+                        for (let i = result.data.length - 1; i >= startIdx; i--) {
+                            const msg = result.data[i];
+                            if (msg && msg.type === 'reading') {
+                                const rowData = [
+                                    new Date(msg.ts * 1000).toLocaleString(),
+                                    msg.temp?.toFixed(2) || '--',
+                                    msg.hum?.toFixed(2) || '--',
+                                    (msg.lux == null ? '--' : msg.lux.toFixed(1)),
+                                    (msg.smoke == null ? '--' : msg.smoke.toFixed(1)),
+                                    (msg.pressure == null ? '--' : msg.pressure.toFixed(1))
+                                ];
+                                const tr = document.createElement('tr');
+                                rowData.forEach((v, idx) => {
+                                    const td = document.createElement('td');
+                                    td.textContent = v;
+                                    if (idx > 0) td.classList.add('right');
+                                    tr.appendChild(td);
+                                });
+                                tbodyAll.appendChild(tr);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('⚠️ 表格更新时出错（但数据已加载）:', error);
+                    renderError = error;
+                }
+
+                // 界面更新部分单独处理错误
+                try {
+                    // 更新计数器（显示实际加载的数据量）
+                    const countSpan = qs('#count');
+                    if (countSpan) countSpan.textContent = result.count;
+
+                    // 更新界面显示最新数据
+                    if (result.data.length > 0) {
+                        const lastMsg = result.data[result.data.length - 1];
+                        if (lastMsg && lastMsg.type === 'reading') {
+                            if (tempVal) tempVal.textContent = lastMsg.temp?.toFixed(2) || '--';
+                            if (humVal) humVal.textContent = lastMsg.hum?.toFixed(2) || '--';
+                            if (luxVal) luxVal.textContent = (lastMsg.lux == null ? '--' : lastMsg.lux.toFixed(1));
+                            if (smokeVal) smokeVal.textContent = (lastMsg.smoke == null ? '--' : lastMsg.smoke.toFixed(1));
+                            if (pressureVal) pressureVal.textContent = (lastMsg.pressure == null ? '--' : lastMsg.pressure.toFixed(1));
+
+                            // 更新temp2显示和温差
+                            if (lastMsg.temp2 != null) {
+                                if (temp2Display) temp2Display.textContent = `另一数据源：${lastMsg.temp2.toFixed(2)}℃`;
+                                if (tempDiffVal) {
+                                    const diff = Math.abs((lastMsg.temp || 0) - lastMsg.temp2);
+                                    tempDiffVal.textContent = diff.toFixed(2);
+                                }
+                            } else {
+                                if (temp2Display) temp2Display.textContent = '';
+                                if (tempDiffVal) tempDiffVal.textContent = '--';
+                            }
+
+                            // 更新Rs/Ro显示
+                            if (lastMsg.rs_ro != null) {
+                                if (rsRoDisplay) rsRoDisplay.textContent = `Rs/Ro：${lastMsg.rs_ro.toFixed(2)}`;
+                            } else {
+                                if (rsRoDisplay) rsRoDisplay.textContent = '';
+                            }
+
+                            if (lastTs) lastTs.textContent = new Date(lastMsg.ts * 1000).toLocaleTimeString();
+                            
+                            // 更新卡片状态颜色
+                            try {
+                                const lastDiff = (lastMsg.temp2 != null) ? Math.abs((lastMsg.temp || 0) - lastMsg.temp2) : null;
+                                if (tempCard) updateCardStatus(tempCard, lastMsg.temp, 25, 30);
+                                if (tempDiffCard) updateCardStatus(tempDiffCard, lastDiff, 1.5, 3);
+                                if (humCard) updateHumidityStatus(humCard, lastMsg.hum);
+                                if (luxCard) updateCardStatus(luxCard, lastMsg.lux, 200, 100, true);
+                                if (smokeCard) updateCardStatus(smokeCard, lastMsg.smoke, 200, 500);
+                                if (pressureCard) updatePressureStatus(pressureCard, lastMsg.pressure);
+
+                                // 更新趋势
+                                const tS = tempsAll.slice(-N_TREND), hS = humsAll.slice(-N_TREND),
+                                    lS = luxAll.slice(-N_TREND).filter(x => !Number.isNaN(x)),
+                                    sS = smokeAll.slice(-N_TREND).filter(x => !Number.isNaN(x)),
+                                    pS = pressureAll.slice(-N_TREND).filter(x => !Number.isNaN(x)),
+                                    dS = tempDiffAll.slice(-N_TREND).filter(x => !Number.isNaN(x));
+                                if (tempTrend) setTrend(tempTrend, delta(tS), '°C');
+                                if (humTrend) setTrend(humTrend, delta(hS), '%');
+                                if (tempDiffTrend && dS.length >= 2) setTrend(tempDiffTrend, delta(dS), '°C');
+                                if (luxTrend && lS.length >= 2) setTrend(luxTrend, delta(lS), 'lx');
+                                if (smokeTrend && sS.length >= 2) setTrend(smokeTrend, delta(sS), 'ppm');
+                                if (pressureTrend && pS.length >= 2) setTrend(pressureTrend, delta(pS), 'hPa');
+                            } catch (error) {
+                                console.error('⚠️ 更新卡片状态时出错:', error);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('⚠️ 界面更新时出错（但数据已加载）:', error);
+                    renderError = error;
+                }
+
+                const renderTime = performance.now() - renderStart;
+                console.log(`✅ 渲染完成 (耗时 ${renderTime.toFixed(0)}ms)`);
+                console.log(`⚡ 总耗时: ${(fetchTime + renderTime).toFixed(0)}ms`);
+
+                historyLoaded = true;
+
+                // 解除加载标志，恢复接收实时数据
+                isLoadingHistory = false;
+                console.log('🔓 已恢复接收实时数据');
+
+                // 注意：加载完成通知已在 common.js 的 executeDataLoad 函数中显示，这里不再重复显示
+                // 即使渲染过程中有错误，数据也已经成功加载
+                if (renderError) {
+                    console.warn('⚠️ 数据加载成功，但渲染过程中出现了一些问题:', renderError);
+                }
+
+                return result.count;
+            } else {
+                console.warn('⚠️ 暂无历史数据或数据格式错误');
+                console.log('返回结果:', result);
+                isLoadingHistory = false;
+                showNotification('⚠️ 暂无历史数据');
+                return 0;
+            }
+        } catch (error) {
+            console.error('❌ 加载历史数据失败：', error);
+            console.error('错误详情:', error.message);
+            isLoadingHistory = false; // 确保解除标志
+            showNotification('❌ 加载历史数据失败');
+            return 0;
+        }
+    }
+
+    // 数据加载相关函数已移至 common.js
+    // 首页通过 initDataLoader 配置回调来处理数据
+
+    // 数据量过大警告相关函数已移至 common.js
+
+    // 弹窗点击外部关闭功能已移至 common.js 的 setupModalClickOutside 函数
+
+    // 更新所有图表
+    function updateAllCharts() {
+        try {
+            // 更新主图表
+            if (window.chartTH?.data) {
+                window.chartTH.data.labels = labelsAll;
+                if (window.chartTH.data.datasets?.[0]) window.chartTH.data.datasets[0].data = tempsAll;
+                if (window.chartTH.data.datasets?.[1]) window.chartTH.data.datasets[1].data = humsAll;
+                window.chartTH.update('none');
+            }
+            if (window.chartLUX?.data) {
+                window.chartLUX.data.labels = labelsAll;
+                if (window.chartLUX.data.datasets?.[0]) window.chartLUX.data.datasets[0].data = luxAll;
+                window.chartLUX.update('none');
+            }
+            if (window.chartSMOKE?.data) {
+                window.chartSMOKE.data.labels = labelsAll;
+                if (window.chartSMOKE.data.datasets?.[0]) window.chartSMOKE.data.datasets[0].data = smokeAll;
+                window.chartSMOKE.update('none');
+            }
+            if (window.chartPRESSURE?.data) {
+                window.chartPRESSURE.data.labels = labelsAll;
+                if (window.chartPRESSURE.data.datasets?.[0]) window.chartPRESSURE.data.datasets[0].data = pressureAll;
+                window.chartPRESSURE.update('none');
+            }
+
+            // 更新全屏图表
+            if (window.chartTHFull?.data) {
+                window.chartTHFull.data.labels = labelsAll;
+                if (window.chartTHFull.data.datasets?.[0]) window.chartTHFull.data.datasets[0].data = tempsAll;
+                if (window.chartTHFull.data.datasets?.[1]) window.chartTHFull.data.datasets[1].data = humsAll;
+                window.chartTHFull.update('none');
+            }
+            if (window.chartLUXFull?.data) {
+                window.chartLUXFull.data.labels = labelsAll;
+                if (window.chartLUXFull.data.datasets?.[0]) window.chartLUXFull.data.datasets[0].data = luxAll;
+                window.chartLUXFull.update('none');
+            }
+            if (window.chartSMOKEFull?.data) {
+                window.chartSMOKEFull.data.labels = labelsAll;
+                if (window.chartSMOKEFull.data.datasets?.[0]) window.chartSMOKEFull.data.datasets[0].data = smokeAll;
+                window.chartSMOKEFull.update('none');
+            }
+            if (window.chartPRESSUREFull?.data) {
+                window.chartPRESSUREFull.data.labels = labelsAll;
+                if (window.chartPRESSUREFull.data.datasets?.[0]) window.chartPRESSUREFull.data.datasets[0].data = pressureAll;
+                window.chartPRESSUREFull.update('none');
+            }
+
+            console.log('✅ 所有图表已更新');
+        } catch (error) {
+            console.error('❌ 更新图表时出错:', error);
+            throw error; // 重新抛出错误以便上层捕获
+        }
+    }
+
+    // 初始化数据加载器（使用common.js的统一加载系统）
+    initDataLoader({
+        onDataLoaded: async function (data, count) {
+            console.log(`📊 数据加载回调：收到 ${count} 条数据`);
+            // 调用首页的loadHistoryData处理数据（传入预加载的数据）
+            await loadHistoryData(count, true, null, data);
+        }
+    });
+
+    // 旧的loadAllHistory函数（保留兼容性）
+    async function loadAllHistory() {
+        showLoadAllConfirm();
+    }
+
+    // ========== 定位地图功能 ==========
+    let locationMap = null;
+    let locationMarker = null;
+    const AMAP_KEY = '3d4e023b04c6dad5e19b296d51949237';
+    const AMAP_SECRET = '0d9b66b69634d78b34635d7aee1ce9d1';
+
+    // 初始化地图
+    function initLocationMap(lon, lat, locationData = null) {
+        const mapContainer = qs('#locationMap');
+        if (!mapContainer) {
+            console.error('❌ 地图容器不存在');
+            return;
+        }
+
+        // 检查容器是否可见
+        const containerParent = mapContainer.closest('#locationMapContainer');
+        if (containerParent && containerParent.style.display === 'none') {
+            containerParent.style.display = 'block';
+        }
+
+        // 验证经纬度
+        if (isNaN(lon) || isNaN(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) {
+            console.error('❌ 无效的经纬度:', lon, lat);
+            if (typeof showNotification === 'function') {
+                showNotification('❌ 经纬度数据无效', true);
+            }
+            return;
+        }
+
+        // 如果地图已存在，先销毁
+        if (locationMap) {
+            try {
+                locationMap.destroy();
+            } catch (e) {
+                console.warn('销毁旧地图时出错:', e);
+            }
+            locationMap = null;
+            locationMarker = null;
+        }
+
+        try {
+            // 创建地图实例
+            locationMap = new AMap.Map('locationMap', {
+                zoom: 15,
+                center: [lon, lat],
+                viewMode: '3D',
+                mapStyle: 'amap://styles/normal'
+            });
+
+            // 创建自定义标记图标（红色大圆点）
+            // 使用Canvas创建图标，避免SVG编码问题
+            const canvas = document.createElement('canvas');
+            canvas.width = 32;
+            canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            
+            // 绘制红色圆点
+            ctx.beginPath();
+            ctx.arc(16, 16, 12, 0, Math.PI * 2);
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            
+            // 绘制白色内点
+            ctx.beginPath();
+            ctx.arc(16, 16, 6, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+            
+            const markerIcon = new AMap.Icon({
+                size: new AMap.Size(32, 32),
+                image: canvas.toDataURL(),
+                imageOffset: new AMap.Pixel(0, 0),
+                imageSize: new AMap.Size(32, 32)
+            });
+
+            // 添加标记
+            locationMarker = new AMap.Marker({
+                position: [lon, lat],
+                title: '设备位置',
+                icon: markerIcon,
+                zIndex: 1000,
+                animation: 'AMAP_ANIMATION_DROP'  // 添加落点动画
+            });
+            locationMap.add(locationMarker);
+
+            // 构建信息窗体内容
+            let infoContent = `<div style="padding: 12px; min-width: 200px;">
+                <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px; color: #333;">📍 设备位置</div>
+                <div style="font-size: 13px; color: #666; margin-bottom: 4px;">经度: <strong style="color: #333;">${lon.toFixed(6)}</strong></div>
+                <div style="font-size: 13px; color: #666; margin-bottom: 4px;">纬度: <strong style="color: #333;">${lat.toFixed(6)}</strong></div>`;
+            
+            if (locationData) {
+                if (locationData.utc) {
+                    try {
+                        const dateStr = new Date(locationData.utc).toLocaleString('zh-CN');
+                        infoContent += `<div style="font-size: 12px; color: #999; margin-top: 6px;">时间: ${dateStr}</div>`;
+                    } catch (e) {
+                        infoContent += `<div style="font-size: 12px; color: #999; margin-top: 6px;">时间: ${locationData.utc}</div>`;
+                    }
+                }
+                if (locationData.csq !== null && locationData.csq !== undefined) {
+                    infoContent += `<div style="font-size: 12px; color: #999;">信号强度: ${locationData.csq}</div>`;
+                }
+            }
+            infoContent += '</div>';
+
+            // 添加信息窗体（显示坐标信息）
+            const infoWindow = new AMap.InfoWindow({
+                content: infoContent,
+                offset: new AMap.Pixel(0, -40),
+                closeWhenClickMap: true
+            });
+
+            // 标记点击事件
+            locationMarker.on('click', () => {
+                infoWindow.open(locationMap, locationMarker.getPosition());
+            });
+
+            // 自动打开信息窗体显示坐标
+            setTimeout(() => {
+                infoWindow.open(locationMap, locationMarker.getPosition());
+            }, 500);
+
+            // 设置地图自适应，确保标记在视野内
+            locationMap.setFitView([locationMarker], false, [50, 50, 50, 50]);
+
+            console.log('✅ 地图初始化成功，已标记坐标点');
+        } catch (error) {
+            console.error('❌ 地图初始化失败:', error);
+            if (typeof showNotification === 'function') {
+                showNotification('❌ 地图初始化失败，请检查网络连接和高德地图API配置', true);
+            } else {
+                console.error('地图初始化失败:', error);
+            }
+        }
+    }
+
+    // 更新地图位置
+    function updateLocationMap(lon, lat, locationData = null) {
+        if (!locationMap || !locationMarker) {
+            initLocationMap(lon, lat, locationData);
+            return;
+        }
+
+        try {
+            const position = [lon, lat];
+            locationMarker.setPosition(position);
+            locationMap.setCenter(position);
+            locationMap.setFitView([locationMarker], false, [50, 50, 50, 50]);
+            
+            // 更新信息窗体内容
+            let infoContent = `<div style="padding: 12px; min-width: 200px;">
+                <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px; color: #333;">📍 设备位置</div>
+                <div style="font-size: 13px; color: #666; margin-bottom: 4px;">经度: <strong style="color: #333;">${lon.toFixed(6)}</strong></div>
+                <div style="font-size: 13px; color: #666; margin-bottom: 4px;">纬度: <strong style="color: #333;">${lat.toFixed(6)}</strong></div>`;
+            
+            if (locationData) {
+                if (locationData.utc) {
+                    try {
+                        const dateStr = new Date(locationData.utc).toLocaleString('zh-CN');
+                        infoContent += `<div style="font-size: 12px; color: #999; margin-top: 6px;">时间: ${dateStr}</div>`;
+                    } catch (e) {
+                        infoContent += `<div style="font-size: 12px; color: #999; margin-top: 6px;">时间: ${locationData.utc}</div>`;
+                    }
+                }
+                if (locationData.csq !== null && locationData.csq !== undefined) {
+                    infoContent += `<div style="font-size: 12px; color: #999;">信号强度: ${locationData.csq}</div>`;
+                }
+            }
+            infoContent += '</div>';
+            
+            // 创建新的信息窗体
+            const infoWindow = new AMap.InfoWindow({
+                content: infoContent,
+                offset: new AMap.Pixel(0, -40),
+                closeWhenClickMap: true
+            });
+            
+            // 移除旧的事件监听器，添加新的
+            locationMarker.off('click');
+            locationMarker.on('click', () => {
+                infoWindow.open(locationMap, locationMarker.getPosition());
+            });
+            
+            // 自动打开信息窗体
+            setTimeout(() => {
+                infoWindow.open(locationMap, locationMarker.getPosition());
+            }, 300);
+            
+            console.log('✅ 地图位置已更新，坐标点已标记');
+        } catch (error) {
+            console.error('❌ 更新地图位置失败:', error);
+        }
+    }
+
+    // 处理定位数据
+    function handleLocationData(msg) {
+        console.log('📍 收到定位数据:', msg);
+        
+        if (msg.lon && msg.lat) {
+            const lon = parseFloat(msg.lon);
+            const lat = parseFloat(msg.lat);
+            
+            // 验证经纬度是否有效
+            if (isNaN(lon) || isNaN(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) {
+                console.error('❌ 无效的经纬度:', lon, lat);
+                if (typeof showNotification === 'function') {
+                    showNotification('❌ 收到的定位数据无效', true);
+                }
+                return;
+            }
+            
+            // 更新坐标显示
+            const locationLon = qs('#locationLon');
+            const locationLat = qs('#locationLat');
+            const locationCoords = qs('#locationCoords');
+            const locationStatusText = qs('#locationStatusText');
+            const locationExtra = qs('#locationExtra');
+            
+            if (locationLon) locationLon.textContent = lon.toFixed(6);
+            if (locationLat) locationLat.textContent = lat.toFixed(6);
+            if (locationCoords) locationCoords.style.display = 'block';
+            if (locationStatusText) {
+                locationStatusText.textContent = '定位成功';
+                locationStatusText.style.color = 'var(--good)';
+            }
+            
+            // 显示额外信息
+            if (locationExtra) {
+                let extraInfo = [];
+                if (msg.utc) {
+                    try {
+                        const dateStr = new Date(msg.utc).toLocaleString('zh-CN');
+                        extraInfo.push(`时间: ${dateStr}`);
+                    } catch (e) {
+                        extraInfo.push(`时间: ${msg.utc}`);
+                    }
+                }
+                if (msg.csq !== null && msg.csq !== undefined) {
+                    extraInfo.push(`信号强度: ${msg.csq}`);
+                }
+                if (extraInfo.length > 0) {
+                    locationExtra.textContent = extraInfo.join(' | ');
+                    locationExtra.style.display = 'block';
+                }
+            }
+            
+            // 自动显示地图（直上直下展开）
+            const mapContainer = qs('#locationMapContainer');
+            const toggleMapBtn = qs('#toggleLocationMapBtn');
+            
+            if (mapContainer) {
+                // 显示地图容器（使用max-height动画，直上直下）
+                mapContainer.style.visibility = 'visible';
+                mapContainer.style.opacity = '1';
+                mapContainer.style.maxHeight = '300px';
+                
+                // 初始化地图
+                setTimeout(() => {
+                    updateLocationMap(lon, lat, msg);
+                }, 100);
+            }
+            
+            // 更新"显示地图"按钮文本
+            if (toggleMapBtn) {
+                toggleMapBtn.style.display = 'block';
+                toggleMapBtn.textContent = '🗺️ 隐藏地图';
+            }
+            
+            // 更新按钮文本
+            const queryBtn = qs('#queryLocationBtn');
+            if (queryBtn) {
+                queryBtn.textContent = '🔄 重新获取';
+                queryBtn.disabled = false;
+            }
+            
+            // 显示成功通知
+            if (typeof showNotification === 'function') {
+                showNotification('✅ 定位获取成功', false);
+            }
+        } else {
+            console.error('❌ 定位数据缺少经纬度:', msg);
+            if (typeof showNotification === 'function') {
+                showNotification('❌ 定位数据格式错误', true);
+            }
+        }
+    }
+
+    // 查询定位
+    async function queryLocation() {
+        const queryBtn = qs('#queryLocationBtn');
+        if (!queryBtn) return;
+
+        // 禁用按钮，显示加载状态
+        queryBtn.disabled = true;
+        queryBtn.textContent = '⏳ 正在获取定位...';
+
+        try {
+            const response = await fetch('/api/location/query', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                console.log('✅ 定位查询命令已发送:', result);
+                
+                // 更新状态显示
+                const locationStatusText = qs('#locationStatusText');
+                if (locationStatusText) {
+                    locationStatusText.textContent = '正在获取定位...';
+                    locationStatusText.style.color = 'var(--warn)';
+                }
+                
+                // 注意：实际的定位数据会通过WebSocket推送回来
+                // 这里不直接更新按钮，等待WebSocket消息
+                // 设置超时，如果30秒内没有收到定位数据，恢复按钮状态
+                setTimeout(() => {
+                    if (queryBtn.disabled && queryBtn.textContent.includes('正在获取定位')) {
+                        queryBtn.disabled = false;
+                        queryBtn.textContent = '📍 获取定位';
+                        if (locationStatusText) {
+                            locationStatusText.textContent = '获取超时';
+                            locationStatusText.style.color = 'var(--bad)';
+                        }
+                        if (typeof showNotification === 'function') {
+                            showNotification('⏰ 定位查询超时，请重试', true);
+                        }
+                    }
+                }, 30000);
+            } else {
+                console.error('❌ 定位查询失败:', result.error);
+                if (typeof showNotification === 'function') {
+                    showNotification('❌ 定位查询失败: ' + (result.message || result.error), true);
+                } else {
+                    console.error('定位查询失败:', result);
+                }
+                queryBtn.disabled = false;
+                queryBtn.textContent = '📍 获取定位';
+                const locationStatusText = qs('#locationStatusText');
+                if (locationStatusText) {
+                    locationStatusText.textContent = '获取失败';
+                    locationStatusText.style.color = 'var(--bad)';
+                }
+            }
+        } catch (error) {
+            console.error('❌ 定位查询请求失败:', error);
+            if (typeof showNotification === 'function') {
+                showNotification('❌ 定位查询请求失败: ' + error.message, true);
+            } else {
+                console.error('定位查询请求失败:', error);
+            }
+            queryBtn.disabled = false;
+            queryBtn.textContent = '📍 获取定位';
+            const locationStatusText = qs('#locationStatusText');
+            if (locationStatusText) {
+                locationStatusText.textContent = '请求失败';
+                locationStatusText.style.color = 'var(--bad)';
+            }
+        }
+    }
+
+    // 切换地图显示/隐藏
+    function toggleLocationMap() {
+        const mapContainer = qs('#locationMapContainer');
+        const toggleBtn = qs('#toggleLocationMapBtn');
+        const locationLon = qs('#locationLon');
+        const locationLat = qs('#locationLat');
+        
+        if (!mapContainer) return;
+        
+        // 检查当前是否展开（通过max-height判断）
+        const isExpanded = mapContainer.style.maxHeight && mapContainer.style.maxHeight !== '0px' && mapContainer.style.maxHeight !== '';
+        
+        if (!isExpanded) {
+            // 显示地图（直上直下展开）
+            mapContainer.style.visibility = 'visible';
+            mapContainer.style.opacity = '1';
+            mapContainer.style.maxHeight = '300px';
+            
+            if (toggleBtn) toggleBtn.textContent = '🗺️ 隐藏地图';
+            
+            // 如果有坐标数据，初始化地图
+            if (locationLon && locationLat && locationLon.textContent !== '--' && locationLat.textContent !== '--') {
+                const lon = parseFloat(locationLon.textContent);
+                const lat = parseFloat(locationLat.textContent);
+                if (!isNaN(lon) && !isNaN(lat)) {
+                    setTimeout(() => {
+                        updateLocationMap(lon, lat);
+                    }, 100);
+                }
+            }
+        } else {
+            // 隐藏地图（直上直下收起）
+            mapContainer.style.maxHeight = '0';
+            mapContainer.style.opacity = '0';
+            setTimeout(() => {
+                mapContainer.style.visibility = 'hidden';
+            }, 400); // 等待动画完成
+            if (toggleBtn) toggleBtn.textContent = '🗺️ 显示地图';
+        }
+    }
+
+    // 绑定定位相关事件
+    const queryLocationBtn = qs('#queryLocationBtn');
+    if (queryLocationBtn) {
+        queryLocationBtn.addEventListener('click', queryLocation);
+    }
+
+    const toggleLocationMapBtn = qs('#toggleLocationMapBtn');
+    if (toggleLocationMapBtn) {
+        toggleLocationMapBtn.addEventListener('click', toggleLocationMap);
+    }
+
+    const closeLocationMapBtn = qs('#closeLocationMap');
+    if (closeLocationMapBtn) {
+        closeLocationMapBtn.addEventListener('click', () => {
+            toggleLocationMap();
+        });
+    }
+
+    function connect() {
+        setWsStatus(false);
+        const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+        wsock = new WebSocket(url);
+        wsock.onopen = () => {
+            setWsStatus(true);
+            updateConnectionStatus(); // 连接成功后立即更新状态
+        };
+        wsock.onclose = () => {
+            setWsStatus(false);
+            updateConnectionStatus(); // 断开连接后更新状态
+            setTimeout(connect, 1500);
+        };
+        wsock.onmessage = e => {
+            try {
+                const msg = JSON.parse(e.data);
+                
+                // 处理警告通知
+                if (msg.type === 'warning') {
+                    if (window.MessageCenter) {
+                        window.MessageCenter.handleWarningMessage(msg);
+                    }
+                    return;
+                }
+                
+                // 处理恢复通知
+                if (msg.type === 'warning_resolved') {
+                    if (window.MessageCenter) {
+                        window.MessageCenter.handleResolvedMessage(msg);
+                    }
+                    return;
+                }
+                
+                // 处理定位数据
+                if (msg.type === 'location') {
+                    handleLocationData(msg);
+                    return;
+                }
+                
+                // 如果正在加载历史数据，暂时忽略实时数据
+                if (isLoadingHistory) {
+                    console.log('⏸️ 正在加载历史数据，暂时跳过实时数据');
+                    return;
+                }
+                if (msg.type === 'reading') addRow(msg.ts, msg.temp, msg.hum, msg.lux, msg.smoke, msg.pressure, msg.temp2, msg.rs_ro);
+            } catch {
+            }
+        };
+    }
+    
+    // ========== 连接状态弹窗相关 ==========
+    const statusPopup = document.getElementById('statusPopup');
+    const wsStatusBadge = document.getElementById('wsStatusBadge');
+    const statusPopupClose = document.getElementById('statusPopupClose');
+    const wsStatusDetail = document.getElementById('wsStatusDetail');
+    const bleStatusDetail = document.getElementById('bleStatusDetail');
+    const mqttStatusDetail = document.getElementById('mqttStatusDetail');
+    const bleStatusDesc = document.getElementById('bleStatusDesc');
+    const mqttStatusDesc = document.getElementById('mqttStatusDesc');
+    
+    let statusUpdateInterval = null;
+    
+    // 动态调整弹窗位置，确保在屏幕内可见
+    function adjustPopupPosition() {
+        const badgeRect = wsStatusBadge.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+        const isMobile = viewportWidth <= 768;
+        const spaceBelow = viewportHeight - badgeRect.bottom;
+        const spaceAbove = badgeRect.top;
+        
+        // 先设置默认向下弹出，以便测量尺寸
+        statusPopup.classList.remove('popup-up');
+        statusPopup.classList.add('popup-down');
+        
+        // 等待一帧，让浏览器渲染并测量实际尺寸
+        requestAnimationFrame(() => {
+            const popupRect = statusPopup.getBoundingClientRect();
+            let popupHeight = popupRect.height;
+            let popupWidth = popupRect.width;
+            
+            // 计算需要的空间（弹窗高度 + 按钮间距 + 安全边距）
+            const requiredSpace = popupHeight + 8 + 20; // 8px间距 + 20px安全边距
+            
+            // 判断空间是否足够
+            const canFitBelow = spaceBelow >= requiredSpace;
+            const canFitAbove = spaceAbove >= requiredSpace;
+            
+            // 移动端：根据按钮位置动态定位，确保不超出屏幕边界
+            if (isMobile) {
+                // 计算弹窗应该的left位置（让弹窗跟随按钮，但不超出屏幕）
+                const badgeCenterX = badgeRect.left + badgeRect.width / 2;
+                let popupLeft = badgeCenterX - popupWidth / 2; // 先尝试居中对齐按钮
+                
+                // 确保弹窗不超出屏幕左侧
+                const minLeft = 10;
+                if (popupLeft < minLeft) {
+                    popupLeft = minLeft;
+                }
+                
+                // 确保弹窗不超出屏幕右侧
+                const maxRight = viewportWidth - 10;
+                if (popupLeft + popupWidth > maxRight) {
+                    popupLeft = maxRight - popupWidth;
+                }
+                
+                // 设置弹窗位置
+                statusPopup.style.left = popupLeft + 'px';
+                statusPopup.style.right = 'auto';
+                
+                // 计算箭头位置（指向按钮中心）
+                const arrowOffset = badgeCenterX - popupLeft;
+                const arrowLeft = Math.max(10, Math.min(arrowOffset, popupWidth - 10)); // 限制在10px到popupWidth-10px之间
+                
+                // 设置箭头位置
+                const arrowElement = window.getComputedStyle(statusPopup, '::before');
+                statusPopup.style.setProperty('--arrow-left', arrowLeft + 'px');
+                
+                // 如果向下弹出空间不足
+                if (!canFitBelow) {
+                    if (canFitAbove && spaceAbove > spaceBelow) {
+                        // 向上弹出有足够空间，切换方向
+                        statusPopup.classList.remove('popup-down');
+                        statusPopup.classList.add('popup-up');
+                        statusPopup.style.maxHeight = '';
+                        statusPopup.style.top = '';
+                        statusPopup.style.bottom = '';
+                    } else {
+                        // 上下空间都不足，保持在下方但限制高度
+                        statusPopup.classList.remove('popup-up');
+                        statusPopup.classList.add('popup-down');
+                        const maxAvailableHeight = Math.max(200, spaceBelow - 28);
+                        statusPopup.style.maxHeight = maxAvailableHeight + 'px';
+                    }
+                } else {
+                    // 空间足够，向下弹出并重置样式
+                    statusPopup.classList.remove('popup-up');
+                    statusPopup.classList.add('popup-down');
+                    statusPopup.style.maxHeight = '';
+                    statusPopup.style.top = '';
+                    statusPopup.style.bottom = '';
+                }
+                
+                // 动态设置箭头位置（通过CSS变量）
+                const arrowStyle = document.createElement('style');
+                arrowStyle.id = 'status-popup-arrow-style';
+                const existingStyle = document.getElementById('status-popup-arrow-style');
+                if (existingStyle) existingStyle.remove();
+                arrowStyle.textContent = `
+                    @media (max-width: 768px) {
+                        .status-popup.popup-down::before,
+                        .status-popup.popup-up::before {
+                            left: var(--arrow-left, 20px) !important;
+                        }
+                    }
+                `;
+                document.head.appendChild(arrowStyle);
+                
+                // 更新箭头位置
+                statusPopup.style.setProperty('--arrow-left', arrowLeft + 'px');
+            } else {
+                // 桌面端：保持居中
+                statusPopup.style.left = '';
+                statusPopup.style.right = '';
+                
+                // 如果向下弹出空间不足
+                if (!canFitBelow) {
+                    if (canFitAbove && spaceAbove > spaceBelow) {
+                        statusPopup.classList.remove('popup-down');
+                        statusPopup.classList.add('popup-up');
+                        statusPopup.style.maxHeight = '';
+                        statusPopup.style.top = '';
+                        statusPopup.style.bottom = '';
+                    } else {
+                        statusPopup.classList.remove('popup-up');
+                        statusPopup.classList.add('popup-down');
+                        const maxAvailableHeight = Math.max(200, spaceBelow - 28);
+                        statusPopup.style.maxHeight = maxAvailableHeight + 'px';
+                    }
+                } else {
+                    statusPopup.classList.remove('popup-up');
+                    statusPopup.classList.add('popup-down');
+                    statusPopup.style.maxHeight = '';
+                    statusPopup.style.top = '';
+                    statusPopup.style.bottom = '';
+                }
+            }
+            
+            // 二次检查：确保弹窗实际位置不会超出屏幕
+            requestAnimationFrame(() => {
+                const finalRect = statusPopup.getBoundingClientRect();
+                const padding = 10;
+                
+                // 检查是否超出屏幕底部
+                if (finalRect.bottom > viewportHeight - padding) {
+                    const overflow = finalRect.bottom - (viewportHeight - padding);
+                    const currentMaxHeight = statusPopup.style.maxHeight || window.getComputedStyle(statusPopup).maxHeight;
+                    const newMaxHeight = Math.max(200, parseFloat(currentMaxHeight) - overflow) + 'px';
+                    statusPopup.style.maxHeight = newMaxHeight;
+                }
+                
+                // 检查是否超出屏幕顶部
+                if (finalRect.top < padding) {
+                    const overflow = padding - finalRect.top;
+                    const currentMaxHeight = statusPopup.style.maxHeight || window.getComputedStyle(statusPopup).maxHeight;
+                    const newMaxHeight = Math.max(200, parseFloat(currentMaxHeight) - overflow) + 'px';
+                    statusPopup.style.maxHeight = newMaxHeight;
+                }
+                
+                // 移动端：再次检查左右边界，并重新计算箭头位置
+                if (isMobile) {
+                    const currentWidth = finalRect.width;
+                    let adjusted = false;
+                    let newPopupLeft = parseFloat(statusPopup.style.left);
+                    
+                    if (finalRect.right > viewportWidth - padding) {
+                        newPopupLeft = viewportWidth - currentWidth - padding;
+                        statusPopup.style.left = newPopupLeft + 'px';
+                        adjusted = true;
+                    }
+                    if (finalRect.left < padding) {
+                        newPopupLeft = padding;
+                        statusPopup.style.left = newPopupLeft + 'px';
+                        adjusted = true;
+                    }
+                    
+                    // 如果位置被调整了，重新计算箭头位置
+                    if (adjusted) {
+                        const badgeCenterX = badgeRect.left + badgeRect.width / 2;
+                        const arrowOffset = badgeCenterX - newPopupLeft;
+                        const arrowLeft = Math.max(10, Math.min(arrowOffset, currentWidth - 10));
+                        statusPopup.style.setProperty('--arrow-left', arrowLeft + 'px');
+                    }
+                }
+            });
+        });
+    }
+    
+    // 点击状态徽章显示弹窗
+    wsStatusBadge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        statusPopup.classList.toggle('show');
+        
+        if (statusPopup.classList.contains('show')) {
+            // 动态调整位置
+            adjustPopupPosition();
+            
+            updateConnectionStatus(); // 打开时立即更新一次
+            // 开始定期更新（每3秒）
+            if (statusUpdateInterval) clearInterval(statusUpdateInterval);
+            statusUpdateInterval = setInterval(updateConnectionStatus, 3000);
+        } else {
+            // 关闭时停止定期更新
+            if (statusUpdateInterval) {
+                clearInterval(statusUpdateInterval);
+                statusUpdateInterval = null;
+            }
+        }
+    });
+    
+    // 点击关闭按钮
+    statusPopupClose.addEventListener('click', () => {
+        statusPopup.classList.remove('show');
+        if (statusUpdateInterval) {
+            clearInterval(statusUpdateInterval);
+            statusUpdateInterval = null;
+        }
+    });
+    
+    // 阻止弹窗内部点击冒泡
+    statusPopup.addEventListener('click', (e) => {
+        e.stopPropagation();
+    });
+    
+    // 点击弹窗外部关闭
+    document.addEventListener('click', (e) => {
+        if (statusPopup.classList.contains('show') && 
+            !statusPopup.contains(e.target) && 
+            !wsStatusBadge.contains(e.target)) {
+            statusPopup.classList.remove('show');
+            if (statusUpdateInterval) {
+                clearInterval(statusUpdateInterval);
+                statusUpdateInterval = null;
+            }
+        }
+    });
+    
+    // 更新连接状态显示
+    async function updateConnectionStatus() {
+        try {
+            // 更新 WebSocket 状态
+            const wsConnected = wsock && wsock.readyState === WebSocket.OPEN;
+            updateStatusBadge(wsStatusDetail, wsConnected, wsConnected ? '已连接' : '未连接');
+            
+            // 从后端获取蓝牙和MQTT状态
+            const response = await fetch('/api/status');
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                    // 更新蓝牙状态
+                    const bleConnected = data.ble?.connected || false;
+                    updateStatusBadge(bleStatusDetail, bleConnected, bleConnected ? '已连接' : '未连接');
+                    
+                    // 更新蓝牙描述（根据后端返回的description）
+                    if (data.ble?.description && bleStatusDesc) {
+                        bleStatusDesc.textContent = data.ble.description;
+                    }
+                    
+                    // 更新MQTT状态
+                    const mqttConnected = data.mqtt?.connected || false;
+                    updateStatusBadge(mqttStatusDetail, mqttConnected, mqttConnected ? '已连接' : '未连接');
+                    
+                    // 更新MQTT描述（根据后端返回的description）
+                    if (data.mqtt?.description && mqttStatusDesc) {
+                        mqttStatusDesc.textContent = data.mqtt.description;
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('更新连接状态失败:', error);
+        }
+    }
+    
+    // 更新状态徽章显示
+    function updateStatusBadge(element, isConnected, text) {
+        if (!element) return;
+        
+        element.classList.remove('connected', 'disconnected');
+        element.classList.add(isConnected ? 'connected' : 'disconnected');
+        
+        const textSpan = element.querySelector('span:last-child');
+        if (textSpan) {
+            textSpan.textContent = text;
+        }
+    }
+
+    // —— 半全屏弹窗交互 ——
+    function openOverlay() {
+        if (!overlay) return;
+        overlay.classList.add('show');
+        overlay.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeOverlay() {
+        if (!overlay) return;
+        overlay.classList.remove('show');
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+
+    function openOverlayLux() {
+        if (!overlayLux) return;
+        overlayLux.classList.add('show');
+        overlayLux.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeOverlayLux() {
+        if (!overlayLux) return;
+        overlayLux.classList.remove('show');
+        overlayLux.setAttribute('aria-hidden', 'true');
+    }
+
+    function openOverlaySmoke() {
+        if (!overlaySmoke) return;
+        overlaySmoke.classList.add('show');
+        overlaySmoke.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeOverlaySmoke() {
+        if (!overlaySmoke) return;
+        overlaySmoke.classList.remove('show');
+        overlaySmoke.setAttribute('aria-hidden', 'true');
+    }
+
+    function openOverlayPressure() {
+        if (!overlayPressure) return;
+        overlayPressure.classList.add('show');
+        overlayPressure.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeOverlayPressure() {
+        if (!overlayPressure) return;
+        overlayPressure.classList.remove('show');
+        overlayPressure.setAttribute('aria-hidden', 'true');
+    }
+
+    const openBtn = qs('#openFullChart');
+    if (openBtn) openBtn.addEventListener('click', () => {
+        openOverlay();
+        // 懒创建放大图
+        if (!chartTHFull && chartTH && chartTH.data) {
+            const ctx = chartTHFullCanvas()?.getContext('2d');
+            if (ctx) {
+                const data = {
+                    labels: labelsFull,
+                    datasets: [
+                        {
+                            label: '温度1 (°C)',
+                            data: tempsFull,
+                            yAxisID: 'y',
+                            borderColor: css('--chart-line-temp-warm'),
+                            pointHoverBorderColor: css('--chart-line-temp-warm')
+                        },
+                        {
+                            label: '温度2 (°C)',
+                            data: temps2Full,
+                            yAxisID: 'y',
+                            borderColor: css('--chart-line-temp-cold'),
+                            pointHoverBorderColor: css('--chart-line-temp-cold')
+                        },
+                        {
+                            label: '湿度 (%)',
+                            data: humsFull,
+                            yAxisID: 'y1',
+                            borderColor: css('--chart-line-hum'),
+                            pointHoverBorderColor: css('--chart-line-hum')
+                        }
+                    ]
+                };
+                const opts = makeBaseOptions();
+                // 全屏图允许插件平移（保留 Alt+框选放大功能、滚轮/双指缩放）
+                if (opts?.plugins?.zoom?.pan) {
+                    opts.plugins.zoom.pan.enabled = true;
+                }
+                chartTHFull = new Chart(ctx, {type: 'line', data, options: opts});
+                // 绑定兜底的手动拖动平移与抓手样式
+                try {
+                    const c = chartTHFull.canvas;
+                    if (c) {
+                        c.style.cursor = 'grab';
+                        c.addEventListener('mousedown', () => {
+                            c.style.cursor = 'grabbing';
+                        });
+                        window.addEventListener('mouseup', () => {
+                            c.style.cursor = 'grab';
+                        });
+                    }
+                } catch (e) {
+                }
+                enableManualDragPan(chartTHFullCanvas(), chartTHFull);
+            }
+        }
+        // 初开时同步颜色
+        setTimeout(() => window.updateChartColors?.(), 50);
+    });
+
+    const closeBtn = qs('#closeOverlay');
+    if (closeBtn) closeBtn.addEventListener('click', closeOverlay);
+    if (overlay) overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeOverlay();
+    });
+
+    // 弹窗按钮操作放大图
+    qs('#zoomInFull')?.addEventListener('click', () => chartTHFull?.zoom(1.2));
+    qs('#zoomOutFull')?.addEventListener('click', () => chartTHFull?.zoom(0.8));
+    qs('#panLeftFull')?.addEventListener('click', () => chartTHFull?.pan({x: 120}));
+    qs('#panRightFull')?.addEventListener('click', () => chartTHFull?.pan({x: -120}));
+    qs('#resetFull')?.addEventListener('click', () => chartTHFull && hardReset(chartTHFull));
+
+    // 亮度全屏逻辑
+    const openBtnLux = qs('#openFullLux');
+    if (openBtnLux) openBtnLux.addEventListener('click', () => {
+        openOverlayLux();
+        if (!chartLUXFull && chartLUX && chartLUX.data) {
+            const ctx = chartLUXFullCanvas()?.getContext('2d');
+            if (ctx) {
+                const data = {
+                    labels: labelsLuxFull,
+                    datasets: [
+                        {
+                            label: '亮度 (lx)',
+                            data: luxFull,
+                            yAxisID: 'y',
+                            borderColor: css('--chart-line-lux'),
+                            pointHoverBorderColor: css('--chart-line-lux')
+                        }
+                    ]
+                };
+                const opts = makeBaseOptions();
+                // 全屏图允许插件平移（保留 Alt+框选放大功能）
+                if (opts?.plugins?.zoom?.pan) {
+                    opts.plugins.zoom.pan.enabled = true;
+                }
+                chartLUXFull = new Chart(ctx, {type: 'line', data, options: opts});
+                try {
+                    const c = chartLUXFull.canvas;
+                    if (c) {
+                        c.style.cursor = 'grab';
+                        c.addEventListener('mousedown', () => {
+                            c.style.cursor = 'grabbing';
+                        });
+                        window.addEventListener('mouseup', () => {
+                            c.style.cursor = 'grab';
+                        });
+                    }
+                } catch (e) {
+                }
+                enableManualDragPan(chartLUXFullCanvas(), chartLUXFull);
+            }
+        }
+        setTimeout(() => window.updateChartColors?.(), 50);
+    });
+
+    const closeBtnLux = qs('#closeOverlayLux');
+    if (closeBtnLux) closeBtnLux.addEventListener('click', closeOverlayLux);
+    if (overlayLux) overlayLux.addEventListener('click', (e) => {
+        if (e.target === overlayLux) closeOverlayLux();
+    });
+
+    qs('#zoomInFullLux')?.addEventListener('click', () => chartLUXFull?.zoom(1.2));
+    qs('#zoomOutFullLux')?.addEventListener('click', () => chartLUXFull?.zoom(0.8));
+    qs('#panLeftFullLux')?.addEventListener('click', () => chartLUXFull?.pan({x: 120}));
+    qs('#panRightFullLux')?.addEventListener('click', () => chartLUXFull?.pan({x: -120}));
+    qs('#resetFullLux')?.addEventListener('click', () => chartLUXFull && hardReset(chartLUXFull));
+
+    // 烟雾全屏逻辑
+    const openBtnSmoke = qs('#openFullSmoke');
+    if (openBtnSmoke) openBtnSmoke.addEventListener('click', () => {
+        openOverlaySmoke();
+        if (!chartSMOKEFull && chartSMOKE && chartSMOKE.data) {
+            const ctx = chartSMOKEFullCanvas()?.getContext('2d');
+            if (ctx) {
+                const data = {
+                    labels: labelsSmokeFull,
+                    datasets: [
+                        {
+                            label: '烟雾浓度 (ppm)',
+                            data: smokeFull,
+                            yAxisID: 'y',
+                            borderColor: css('--chart-line-smoke'),
+                            pointHoverBorderColor: css('--chart-line-smoke')
+                        }
+                    ]
+                };
+                const opts = makeBaseOptions();
+                opts.scales = {
+                    x: {ticks: {maxRotation: 0, autoSkip: true}, grid: {color: css('--chart-grid')}},
+                    y: {position: 'left', grid: {color: css('--chart-grid')}}
+                };
+                // 全屏图允许插件平移（保留 Alt+框选放大功能）
+                if (opts?.plugins?.zoom?.pan) {
+                    opts.plugins.zoom.pan.enabled = true;
+                }
+                chartSMOKEFull = new Chart(ctx, {type: 'line', data, options: opts});
+                try {
+                    const c = chartSMOKEFull.canvas;
+                    if (c) {
+                        c.style.cursor = 'grab';
+                        c.addEventListener('mousedown', () => {
+                            c.style.cursor = 'grabbing';
+                        });
+                        window.addEventListener('mouseup', () => {
+                            c.style.cursor = 'grab';
+                        });
+                    }
+                } catch (e) {
+                }
+                enableManualDragPan(chartSMOKEFullCanvas(), chartSMOKEFull);
+            }
+        }
+        setTimeout(() => window.updateChartColors?.(), 50);
+    });
+
+    const closeBtnSmoke = qs('#closeOverlaySmoke');
+    if (closeBtnSmoke) closeBtnSmoke.addEventListener('click', closeOverlaySmoke);
+    if (overlaySmoke) overlaySmoke.addEventListener('click', (e) => {
+        if (e.target === overlaySmoke) closeOverlaySmoke();
+    });
+
+    // MQ2 控制快捷入口
+    if (smokeCard) {
+        smokeCard.style.cursor = 'pointer';
+        smokeCard.addEventListener('click', (e) => {
+            if (e?.target?.closest?.('.info-btn')) return;
+            if (typeof window.openOverlayMQ2 === 'function') {
+                window.openOverlayMQ2();
+            }
+        });
+    }
+
+    qs('#zoomInFullSmoke')?.addEventListener('click', () => chartSMOKEFull?.zoom(1.2));
+    qs('#zoomOutFullSmoke')?.addEventListener('click', () => chartSMOKEFull?.zoom(0.8));
+    qs('#panLeftFullSmoke')?.addEventListener('click', () => chartSMOKEFull?.pan({x: 120}));
+    qs('#panRightFullSmoke')?.addEventListener('click', () => chartSMOKEFull?.pan({x: -120}));
+    qs('#resetFullSmoke')?.addEventListener('click', () => chartSMOKEFull && hardReset(chartSMOKEFull));
+
+    // 大气压全屏逻辑
+    const openBtnPressure = qs('#openFullPressure');
+    if (openBtnPressure) openBtnPressure.addEventListener('click', () => {
+        openOverlayPressure();
+        if (!chartPRESSUREFull && chartPRESSURE && chartPRESSURE.data) {
+            const ctx = chartPRESSUREFullCanvas()?.getContext('2d');
+            if (ctx) {
+                const data = {
+                    labels: labelsPressureFull,
+                    datasets: [
+                        {
+                            label: '大气压 (hPa)',
+                            data: pressureFull,
+                            yAxisID: 'y',
+                            borderColor: css('--chart-line-pressure'),
+                            pointHoverBorderColor: css('--chart-line-pressure')
+                        }
+                    ]
+                };
+                const opts = makeBaseOptions();
+                opts.scales = {
+                    x: {ticks: {maxRotation: 0, autoSkip: true}, grid: {color: css('--chart-grid')}},
+                    y: {position: 'left', grid: {color: css('--chart-grid')}}
+                };
+                // 全屏图允许插件平移（保留 Alt+框选放大功能）
+                if (opts?.plugins?.zoom?.pan) {
+                    opts.plugins.zoom.pan.enabled = true;
+                }
+                chartPRESSUREFull = new Chart(ctx, {type: 'line', data, options: opts});
+                try {
+                    const c = chartPRESSUREFull.canvas;
+                    if (c) {
+                        c.style.cursor = 'grab';
+                        c.addEventListener('mousedown', () => {
+                            c.style.cursor = 'grabbing';
+                        });
+                        window.addEventListener('mouseup', () => {
+                            c.style.cursor = 'grab';
+                        });
+                    }
+                } catch (e) {
+                }
+                enableManualDragPan(chartPRESSUREFullCanvas(), chartPRESSUREFull);
+            }
+        }
+        setTimeout(() => window.updateChartColors?.(), 50);
+    });
+
+    const closeBtnPressure = qs('#closeOverlayPressure');
+    if (closeBtnPressure) closeBtnPressure.addEventListener('click', closeOverlayPressure);
+    if (overlayPressure) overlayPressure.addEventListener('click', (e) => {
+        if (e.target === overlayPressure) closeOverlayPressure();
+    });
+
+    qs('#zoomInFullPressure')?.addEventListener('click', () => chartPRESSUREFull?.zoom(1.2));
+    qs('#zoomOutFullPressure')?.addEventListener('click', () => chartPRESSUREFull?.zoom(0.8));
+    qs('#panLeftFullPressure')?.addEventListener('click', () => chartPRESSUREFull?.pan({x: 120}));
+    qs('#panRightFullPressure')?.addEventListener('click', () => chartPRESSUREFull?.pan({x: -120}));
+    qs('#resetFullPressure')?.addEventListener('click', () => chartPRESSUREFull && hardReset(chartPRESSUREFull));
+
+    // 绑定"加载数据"按钮
+    const loadDataBtn = qs('#loadDataBtn');
+    if (loadDataBtn) {
+        loadDataBtn.addEventListener('click', openLoadModal);
+    }
+
+    // 消息中心功能已移至 common.js，使用 MessageCenter 对象
+
+    // 页面加载完成后初始化所有功能
+    window.addEventListener('load', function () {
+        // 初始化帮助弹窗和功能菜单
+        initHelpModal();
+        initAboutModal();
+        initFunctionMenu();
+
+        // 检查首次访问并显示帮助
+        checkFirstVisit();
+    });
+
+    // 首次加载：不清空数据（因为本来就是空的）
+    loadHistoryData(100, false).then(() => {
+        console.log('✅ 历史数据加载流程完成，开始连接WebSocket...');
+        connect();
+        // 初始化消息中心
+        if (window.MessageCenter) {
+            window.MessageCenter.init();
+            window.MessageCenter.loadUnreadWarningCount();
+        }
+    }).catch(err => {
+        console.error('❌ 历史数据加载出错，仍继续连接WebSocket：', err);
+        connect();
+        // 初始化消息中心
+        if (window.MessageCenter) {
+            window.MessageCenter.init();
+            window.MessageCenter.loadUnreadWarningCount();
+        }
+    });
+</script>
+
+
+</body>
+</html>

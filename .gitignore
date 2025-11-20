@@ -1,0 +1,96 @@
+# --------------------------
+# macOS / Windows system files
+# --------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# --------------------------
+# Python
+# --------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# virtual environments
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask
+instance/
+.webassets-cache
+
+# Scrapy
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# --------------------------
+# IDE / Editor
+# --------------------------
+.vscode/
+.idea/
+*.swp
+.cursor/
+
+# --------------------------
+# Logs and temp files
+# --------------------------
+*.log
+*.tmp
+*.bak
+*.pid
+
+# --------------------------
+# Project-specific
+# --------------------------
+
+# PythonProject 机密配置
+secrets.txt
+cafile/
+
+# STM32 / CMake 生成目录
+build/
+Drivers/
+
+# demo/临时目录与本地文档目录
+demoWeb/
+README/

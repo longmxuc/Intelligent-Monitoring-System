@@ -32,8 +32,8 @@ CAFILE_DIR = PROJECT_DIR / "cafile"
 # MQTT配置（主要数据源）
 MQTT_BROKER = "b734d07e.ala.cn-hangzhou.emqxsl.cn"
 MQTT_PORT = 8883  # MQTT over TLS/SSL
-MQTT_TOPIC = "stm32/item/data_now"  # 传感器数据主题
-MQTT_CMD_TOPIC = "stm32/item/data_cmd"  # 定位命令主题（接收定位数据）
+MQTT_TOPIC = "stm32/D01/data_now"  # 传感器数据主题
+MQTT_CMD_TOPIC = "stm32/D01/data_cmd"  # 定位命令主题（接收定位数据）
 MQTT_USERNAME = SECRETS.get("MQTT_USERNAME", "")
 MQTT_PASSWORD = SECRETS.get("MQTT_PASSWORD", "")
 MQTT_CA_CERT_FILE = CAFILE_DIR / "emqxsl-ca.crt"  # CA证书文件路径

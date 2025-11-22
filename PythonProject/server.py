@@ -5,14 +5,15 @@ import platform
 import re
 import time
 import ssl
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Set, Optional
+from typing import Set, Optional, Dict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, Response, PlainTextResponse
 import uvicorn
 from bleak import BleakClient, BleakScanner  # 添加 BleakScanner
 import httpx
@@ -22,18 +23,39 @@ from secrets_manager import SECRETS
 # 导入数据库管理器
 from db_manager import get_db_manager
 
+# 导入MQTT消息发送模块
+from mqtt_message_sender import MqttMessageSender
+
 # ============ 基本配置 ============
 PROJECT_DIR = Path(__file__).parent
 WEB_DIR = PROJECT_DIR / "web"
-INDEX_FILE = WEB_DIR / "index.html"
+INDEX_FILE = WEB_DIR / "index.html"  # 实时数据页
+DEVICE_INDEX_FILE = WEB_DIR / "devices.html"  # 设备总览页
 RESOURCE_DIR = PROJECT_DIR / "resource"
 CAFILE_DIR = PROJECT_DIR / "cafile"
 
 # MQTT配置（主要数据源）
 MQTT_BROKER = "b734d07e.ala.cn-hangzhou.emqxsl.cn"
 MQTT_PORT = 8883  # MQTT over TLS/SSL
-MQTT_TOPIC = "stm32/D01/data_now"  # 传感器数据主题
-MQTT_CMD_TOPIC = "stm32/D01/data_cmd"  # 定位命令主题（接收定位数据）
+# 支持的设备列表
+MQTT_DEVICES = ["D01", "D02", "D03", "D04"]  # 支持多个设备（目前除了前面两个，后面的都是占位符）
+
+# 设备名称映射配置（可自定义每个设备的显示名称）
+DEVICE_NAMES = {
+    "D01": "实验平台",
+    "D02": "算力机房",
+    "D03": "液冷中心",
+    "D04": "访客中心"
+}
+
+# 为每个设备生成主题列表
+MQTT_TOPICS = [f"stm32/{device}/data_now" for device in MQTT_DEVICES]  # 传感器数据主题列表
+MQTT_CMD_TOPICS = [f"stm32/{device}/data_cmd" for device in MQTT_DEVICES]  # 定位命令主题列表
+MQTT_TOPIC_MAP = {device.upper(): f"stm32/{device}/data_now" for device in MQTT_DEVICES}
+MQTT_CMD_TOPIC_MAP = {device.upper(): f"stm32/{device}/data_cmd" for device in MQTT_DEVICES}
+# 保留旧的主题变量以兼容现有代码（使用D01作为默认）
+MQTT_TOPIC = MQTT_TOPICS[0]  # 默认使用D01主题（向后兼容）
+MQTT_CMD_TOPIC = MQTT_CMD_TOPICS[0]  # 默认使用D01命令主题（向后兼容）
 MQTT_USERNAME = SECRETS.get("MQTT_USERNAME", "")
 MQTT_PASSWORD = SECRETS.get("MQTT_PASSWORD", "")
 MQTT_CA_CERT_FILE = CAFILE_DIR / "emqxsl-ca.crt"  # CA证书文件路径
@@ -73,7 +95,7 @@ ble_client = None
 # 自动恢复机制配置
 AUTO_RECOVERY_NORMAL_PACKETS = 3  # 连续收到N个正常数据包后自动标记为安全（默认3个，即30秒）
 # 跟踪每个传感器类型的连续正常数据包计数
-warning_recovery_counters = {}  # 字典，key为警告类型（T/H/B/S/P），value为连续正常数据包计数
+warning_recovery_counters = {}  # 字典，key为(device_id, warning_type)，value为连续正常数据包计数
 warning_recovery_lock = asyncio.Lock()  # 用于保护计数器的锁
 
 # 传感器正常值阈值（与单片机端保持一致）
@@ -121,23 +143,59 @@ MQ2_MODE_CONFIG = {
 }
 
 DEFAULT_MQ2_MODE = "eco"
+DEFAULT_BMP180_MODE = "always"  # BMP180默认不省电
+DEFAULT_BH1750_MODE = "always"  # BH1750默认不省电
 
 # MQ2 初始化与调度任务
 mq2_bootstrap_task = None
-mq2_cycle_task = None
-mq2_cycle_wakeup: Optional[asyncio.Event] = None
+mq2_cycle_tasks: Dict[str, asyncio.Task] = {}
+mq2_cycle_wakeups: Dict[str, asyncio.Event] = {}
+
+# BMP180 初始化与调度任务
+bmp180_bootstrap_task = None
+bmp180_cycle_tasks: Dict[str, asyncio.Task] = {}
+bmp180_cycle_wakeups: Dict[str, asyncio.Event] = {}
+
+# BH1750 初始化与调度任务
+bh1750_bootstrap_task = None
+bh1750_cycle_tasks: Dict[str, asyncio.Task] = {}
+bh1750_cycle_wakeups: Dict[str, asyncio.Event] = {}
+
+
+def get_managed_mq2_devices():
+    seen = set()
+    devices = []
+    for candidate in ["D01"] + MQTT_DEVICES:
+        if not candidate:
+            continue
+        dev = candidate.upper()
+        if dev not in seen:
+            seen.add(dev)
+            devices.append(dev)
+    if not devices:
+        devices = ["D01"]
+    return devices
 
 
 def ensure_mq2_cycle_started():
     """
-    确保MQ2供电调度器只启动一次，并在通信链路准备好后运行。
+    确保MQ2供电调度器仅针对需要的设备各启动一次。
     """
-    global mq2_cycle_task, mq2_cycle_wakeup
-    if mq2_cycle_task and not mq2_cycle_task.done():
-        return
-    if mq2_cycle_wakeup is None:
-        mq2_cycle_wakeup = asyncio.Event()
-    mq2_cycle_task = asyncio.create_task(mq2_cycle_manager())
+    global mq2_cycle_tasks, mq2_cycle_wakeups
+    for device in get_managed_mq2_devices():
+        task = mq2_cycle_tasks.get(device)
+        if task and not task.done():
+            continue
+        if device not in mq2_cycle_wakeups:
+            mq2_cycle_wakeups[device] = asyncio.Event()
+        mq2_cycle_tasks[device] = asyncio.create_task(mq2_cycle_manager(device))
+
+
+def wake_mq2_cycle(device_id: str):
+    device_id = (device_id or "D01").upper()
+    event = mq2_cycle_wakeups.get(device_id)
+    if event:
+        event.set()
 
 
 def transports_ready() -> bool:
@@ -196,6 +254,10 @@ async def get_device_address():
 # ============ WebSocket 广播 ============
 connections: Set[WebSocket] = set()
 broadcast_queue: asyncio.Queue = asyncio.Queue()  # 兼容 Python 3.8
+
+# ============ MQTT消息发送控制 ============
+# 创建MQTT消息发送管理器实例（将在lifespan中初始化）
+mqtt_message_sender: Optional[MqttMessageSender] = None
 
 
 async def broadcaster():
@@ -272,7 +334,8 @@ def _check_sensor_value_normal(warning_type: str, value: float) -> bool:
     return threshold['min'] <= value <= threshold['max']
 
 
-def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None, pressure=None, source=None):
+def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None, pressure=None, source=None,
+                     device_id=None):
     """入队广播，并更新统计计数。"""
     ts = time.time()
     lux_value_display = None if lux is None else round(lux, 1)
@@ -296,6 +359,7 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
         "pressure": pressure_value_display,
         "temp2": temp2_value_display,
         "rs_ro": rs_ro_value_display,
+        "device_id": device_id,  # 添加设备ID
     }
 
     # 更新统计并保存到数据库
@@ -308,7 +372,7 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
                 globals()["stat_with_smoke"] += 1
         await broadcast_queue.put(json.dumps(payload))
 
-        # 保存到数据库（包括新增的3个参数）
+        # 保存到数据库（包括新增的3个参数和设备ID）
         db = get_db_manager()
         try:
             await db.insert_sensor_data(
@@ -319,7 +383,8 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
                 timestamp=ts,
                 rs_ro=rs_ro_value_db,
                 temp2=temp2_value_db,
-                pressure=pressure_value_db
+                pressure=pressure_value_db,
+                device_id=device_id  # 添加设备ID
             )
         except Exception as e:
             print(f"【数据库】保存数据失败：{e}")
@@ -327,16 +392,22 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
             if smoke_value is not None:
                 try:
                     via_label = source or ("BLE" if ble_connected else ("MQTT" if mqtt_connected else None))
-                    await db.set_sensor_state("MQ2", sensor_state=None, via=via_label, last_value=smoke_value)
+                    await db.set_sensor_state(
+                        "MQ2",
+                        sensor_state=None,
+                        via=via_label,
+                        last_value=smoke_value,
+                        device_id=(device_id or "D01")
+                    )
                 except Exception as e:
                     print(f"【数据库】更新MQ2最近值失败：{e}")
-
 
         # 自动恢复机制：检查是否有未恢复的警告，连续收到N个正常数据包后自动标记为安全
         try:
             async with warning_recovery_lock:
                 # 查询所有未恢复的警告类型
-                unresolved_types = await db.get_unresolved_warning_types()
+                current_device_id = device_id or "D01"
+                unresolved_types = await db.get_unresolved_warning_types(device_id=current_device_id)
 
                 if unresolved_types:
                     # 对于每个未恢复的警告类型，检查当前数据值是否正常
@@ -361,14 +432,16 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
                         # 检查传感器值是否在正常范围内
                         is_normal = _check_sensor_value_normal(warning_type, sensor_value)
 
+                        counter_key = (current_device_id, warning_type)
+
                         if is_normal:
                             # 值在正常范围内，增加计数器
-                            if warning_type not in warning_recovery_counters:
-                                warning_recovery_counters[warning_type] = 0
-                            warning_recovery_counters[warning_type] += 1
+                            if counter_key not in warning_recovery_counters:
+                                warning_recovery_counters[counter_key] = 0
+                            warning_recovery_counters[counter_key] += 1
 
                             # 检查是否达到阈值
-                            if warning_recovery_counters[warning_type] >= AUTO_RECOVERY_NORMAL_PACKETS:
+                            if warning_recovery_counters[counter_key] >= AUTO_RECOVERY_NORMAL_PACKETS:
                                 # 自动标记为安全
                                 type_names = {
                                     'T': '温度',
@@ -379,16 +452,17 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
                                 }
                                 type_name = type_names.get(warning_type, warning_type)
 
-                                success = await db.resolve_warning(warning_type)
+                                success = await db.resolve_warning(warning_type, device_id=current_device_id)
                                 if success:
                                     # 重置计数器
-                                    warning_recovery_counters[warning_type] = 0
+                                    warning_recovery_counters[counter_key] = 0
 
                                     # 通过WebSocket推送恢复通知
                                     resolved_notification = {
                                         "type": "warning_resolved",
                                         "warning_type": warning_type,
                                         "warning_name": type_name,
+                                        "device_id": current_device_id,
                                         "timestamp": ts,
                                         "auto_recovered": True  # 标记为自动恢复
                                     }
@@ -397,10 +471,10 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
                                         f"【自动恢复】✓ {type_name}传感器已自动恢复（连续收到{AUTO_RECOVERY_NORMAL_PACKETS}个正常数据包，当前值：{sensor_value}）")
                                 else:
                                     # 如果标记失败，可能是已经被手动恢复了，重置计数器
-                                    warning_recovery_counters[warning_type] = 0
+                                    warning_recovery_counters[counter_key] = 0
                             else:
                                 # 打印进度（可选，避免日志过多）
-                                if warning_recovery_counters[warning_type] == 1:
+                                if warning_recovery_counters[counter_key] == 1:
                                     type_names = {
                                         'T': '温度',
                                         'H': '湿度',
@@ -413,7 +487,7 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
                                         f"【自动恢复】开始监控{type_name}传感器恢复状态（需要连续{AUTO_RECOVERY_NORMAL_PACKETS}个正常数据包，当前值：{sensor_value}）")
                         else:
                             # 值不在正常范围内，重置计数器
-                            if warning_type in warning_recovery_counters:
+                            if counter_key in warning_recovery_counters:
                                 type_names = {
                                     'T': '温度',
                                     'H': '湿度',
@@ -425,12 +499,15 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
                                 threshold = SENSOR_THRESHOLDS.get(warning_type, {})
                                 print(
                                     f"【自动恢复】{type_name}传感器值异常（当前值：{sensor_value}，正常范围：{threshold.get('min', '?')}-{threshold.get('max', '?')}），重置恢复计数器")
-                                del warning_recovery_counters[warning_type]
+                                del warning_recovery_counters[counter_key]
 
                 # 清理已经不存在的未恢复警告类型的计数器
                 if unresolved_types:
                     # 只保留仍然存在的未恢复警告类型的计数器
-                    keys_to_remove = [k for k in warning_recovery_counters.keys() if k not in unresolved_types]
+                    keys_to_remove = [
+                        k for k in list(warning_recovery_counters.keys())
+                        if k[0] == current_device_id and k[1] not in unresolved_types
+                    ]
                     for k in keys_to_remove:
                         del warning_recovery_counters[k]
         except Exception as e:
@@ -473,10 +550,11 @@ def ble_notify_handler(_handle, data: bytearray):
             p = float(m.group(7))  # P = 气压
 
             print(f"【BLE】解析数据 - T:{t}°C H:{h}% L:{l}lux Y:{ppm}ppm | R:{rs_ro} W:{t2}°C P:{p}hpa")
-            _enqueue_reading(t, h, l, ppm, rs_ro, t2, p, source="BLE")
+            # 蓝牙设备对应D01设备（因为蓝牙连接时会屏蔽D01的MQTT数据）
+            _enqueue_reading(t, h, l, ppm, rs_ro, t2, p, source="BLE", device_id="D01")
         else:
-            # 尝试解析警告数据
-            if parse_warning_data(line, source="BLE"):
+            # 尝试解析警告数据（蓝牙设备对应D01）
+            if parse_warning_data(line, source="BLE", device_id="D01"):
                 # 警告数据已处理
                 pass
             else:
@@ -496,12 +574,15 @@ def mqtt_on_connect(client, userdata, flags, rc):
         # 重置首次消息标志（连接成功后，下次收到的第一条消息可能是服务器保留的消息）
         mqtt_first_message_received = {}
         print("【MQTT】已重置首次消息标志，将屏蔽订阅后的第一条消息（通常是服务器保留的最后一条消息）")
-        # 订阅传感器数据主题
-        client.subscribe(MQTT_TOPIC)
-        print(f"【MQTT】✓ 已订阅主题：{MQTT_TOPIC}")
-        # 订阅定位命令主题
-        client.subscribe(MQTT_CMD_TOPIC)
-        print(f"【MQTT】✓ 已订阅定位主题：{MQTT_CMD_TOPIC}")
+        # 订阅所有设备的传感器数据主题
+        for topic in MQTT_TOPICS:
+            client.subscribe(topic)
+            print(f"【MQTT】✓ 已订阅传感器数据主题：{topic}")
+        # 订阅所有设备的定位命令主题
+        for topic in MQTT_CMD_TOPICS:
+            client.subscribe(topic)
+            print(f"【MQTT】✓ 已订阅定位命令主题：{topic}")
+        print(f"【MQTT】已订阅 {len(MQTT_TOPICS)} 个设备的传感器数据主题和 {len(MQTT_CMD_TOPICS)} 个定位命令主题")
     else:
         mqtt_connected = False
         print(f"【MQTT】❌ 连接失败，错误码：{rc}")
@@ -517,14 +598,36 @@ def mqtt_on_disconnect(client, userdata, rc):
         print("【MQTT】断开连接")
 
 
-def parse_location_data(payload):
+def extract_device_id_from_topic(topic: str) -> Optional[str]:
+    """
+    从MQTT主题中提取设备ID
+    例如：stm32/D01/data_now -> D01
+          stm32/D02/data_cmd -> D02
+    """
+    try:
+        parts = topic.split('/')
+        if len(parts) >= 2 and parts[0] == 'stm32':
+            device_id = parts[1].upper()
+            if device_id in MQTT_DEVICES:
+                return device_id
+    except Exception:
+        pass
+    return None
+
+
+def parse_location_data(payload, device_id: Optional[str] = None):
     """
     解析定位信息（JSON格式）
     支持的格式：
     - JSON格式：{"utc":"2025-11-04T14:59:53Z","iccid":"898604011025D0227746","type":"LBS","imei":"864865082106973","csq":31,"lon":118.0412,"lat":24.37883}
+    
+    参数:
+        payload: 定位数据内容
+        device_id: 设备ID（可选）
     """
     try:
-        print(f"【定位】收到定位信息: {payload}")
+        device_info = f" [设备: {device_id}]" if device_id else ""
+        print(f"【定位】收到定位信息{device_info}: {payload}")
 
         # 尝试解析JSON格式的定位数据
         try:
@@ -560,10 +663,12 @@ def parse_location_data(payload):
                             "imei": imei,
                             "csq": csq,
                             "location_type": location_type,
+                            "device_id": device_id,
                             "timestamp": time.time()
                         }
                         await broadcast_queue.put(json.dumps(location_notification))
-                        print(f"【定位】✓ 已推送定位信息到前端")
+                        device_info = f" [设备: {device_id}]" if device_id else ""
+                        print(f"【定位】✓ 已推送定位信息到前端{device_info}")
                     except Exception as e:
                         print(f"【定位】推送定位信息失败：{e}")
 
@@ -610,7 +715,7 @@ def parse_location_data(payload):
         return False
 
 
-def parse_warning_data(payload, source="MQTT"):
+def parse_warning_data(payload, source="MQTT", device_id: Optional[str] = None):
     """
     解析警告数据
     支持的格式：
@@ -621,6 +726,7 @@ def parse_warning_data(payload, source="MQTT"):
     参数:
         payload: 原始消息内容
         source: 数据源（MQTT或BLE）
+        device_id: 设备ID（可选）
     """
     try:
         payload = payload.strip()
@@ -634,19 +740,21 @@ def parse_warning_data(payload, source="MQTT"):
             if payload.startswith('S') and len(payload) == 2:
                 warning_type = payload[1].upper()
                 if warning_type in ['T', 'H', 'B', 'S', 'P']:
-                    print(f"【警告-{source}】收到恢复信号：{payload} (类型: {warning_type})")
+                    device_info = f" [设备: {device_id}]" if device_id else ""
+                    print(f"【警告-{source}】收到恢复信号{device_info}：{payload} (类型: {warning_type})")
 
                     # 异步保存恢复数据并推送通知
                     async def _save_resolved():
                         try:
                             db = get_db_manager()
-                            success = await db.resolve_warning(warning_type)
+                            success = await db.resolve_warning(warning_type, device_id=(device_id or "D01"))
 
                             if success:
                                 # 重置自动恢复计数器（因为已经手动恢复了）
                                 async with warning_recovery_lock:
-                                    if warning_type in warning_recovery_counters:
-                                        del warning_recovery_counters[warning_type]
+                                    counter_key = ((device_id or "D01"), warning_type)
+                                    if counter_key in warning_recovery_counters:
+                                        del warning_recovery_counters[counter_key]
                                         print(f"【自动恢复】已重置{warning_type}类型的恢复计数器（收到手动恢复信号）")
 
                                 # 通过WebSocket推送恢复通知
@@ -663,10 +771,12 @@ def parse_warning_data(payload, source="MQTT"):
                                     "type": "warning_resolved",
                                     "warning_type": warning_type,
                                     "warning_name": type_name,
+                                    "device_id": device_id or "D01",
                                     "timestamp": time.time()
                                 }
                                 await broadcast_queue.put(json.dumps(resolved_notification))
-                                print(f"【警告-{source}】✓ 已推送恢复通知")
+                                device_info = f" [设备: {device_id}]" if device_id else ""
+                                print(f"【警告-{source}】✓ 已推送恢复通知{device_info}")
                         except Exception as e:
                             print(f"【警告-{source}】保存恢复数据失败：{e}")
 
@@ -702,8 +812,9 @@ def parse_warning_data(payload, source="MQTT"):
                         unit = '°C' if warning_type == 'T' else ('%' if warning_type == 'H' else (
                             'lux' if warning_type == 'B' else ('ppm' if warning_type == 'S' else 'hPa')))
 
+                        device_info = f" [设备: {device_id}]" if device_id else ""
                         print(
-                            f"【警告-{source}】⚠️ 检测到异常：{type_name}异常，当前值：{warning_value}{unit} (消息: {payload})")
+                            f"【警告-{source}】⚠️ 检测到异常{device_info}：{type_name}异常，当前值：{warning_value}{unit} (消息: {payload})")
 
                         # 异步保存警告数据并推送通知
                         async def _save_warning():
@@ -712,13 +823,15 @@ def parse_warning_data(payload, source="MQTT"):
                                 await db.insert_warning_data(
                                     warning_type=warning_type,
                                     warning_message=payload,
-                                    warning_value=warning_value
+                                    warning_value=warning_value,
+                                    device_id=device_id or "D01"
                                 )
 
                                 # 重置自动恢复计数器（因为出现了新的异常）
                                 async with warning_recovery_lock:
-                                    if warning_type in warning_recovery_counters:
-                                        del warning_recovery_counters[warning_type]
+                                    counter_key = ((device_id or "D01"), warning_type)
+                                    if counter_key in warning_recovery_counters:
+                                        del warning_recovery_counters[counter_key]
                                         print(f"【自动恢复】已重置{warning_type}类型的恢复计数器（检测到新的异常）")
 
                                 # 通过WebSocket推送警告通知
@@ -729,6 +842,7 @@ def parse_warning_data(payload, source="MQTT"):
                                     "warning_value": warning_value,
                                     "warning_unit": unit,
                                     "warning_message": payload,
+                                    "device_id": device_id or "D01",
                                     "timestamp": time.time()
                                 }
                                 await broadcast_queue.put(json.dumps(warning_notification))
@@ -762,49 +876,56 @@ def mqtt_on_message(client, userdata, msg):
     MQTT消息回调
     处理从MQTT接收到的消息（传感器数据、定位信息等）
     """
-    global ble_connected, mqtt_first_message_received
+    global ble_connected, mqtt_first_message_received, main_loop
 
     try:
         topic = msg.topic
         payload = msg.payload.decode('utf-8').strip()
 
+        # 从主题中提取设备ID
+        device_id = extract_device_id_from_topic(topic)
+        device_info = f" [设备: {device_id}]" if device_id else ""
+
         # 屏蔽传感器数据主题的第一条消息（通常是服务器保留的最后一条消息，会导致重复数据）
-        if topic == MQTT_TOPIC and topic not in mqtt_first_message_received:
+        if topic in MQTT_TOPICS and topic not in mqtt_first_message_received:
             mqtt_first_message_received[topic] = True
-            print(f"【MQTT】⚠️ 屏蔽第一条消息（服务器保留消息） - 主题: {topic}, 内容: {payload[:50]}...")
+            print(f"【MQTT】⚠️ 屏蔽第一条消息（服务器保留消息）{device_info} - 主题: {topic}, 内容: {payload[:50]}...")
             return
 
         # 根据主题区分处理
-        if topic == MQTT_CMD_TOPIC:
+        if topic in MQTT_CMD_TOPICS:
             # 定位命令主题，处理定位数据（JSON格式）
             # 忽略查询命令"LBS?"（这是我们发送的命令，不是定位数据）
             if payload.strip() == "LBS?":
-                print(f"【MQTT-定位】收到定位查询命令（忽略）: {payload}")
+                print(f"【MQTT-定位】收到定位查询命令（忽略）{device_info}: {payload}")
                 return
             normalized_payload = payload.strip().upper()
             if normalized_payload in MQTT_CONTROL_COMMANDS:
-                print(f"【MQTT-控制】收到控制指令回显（忽略定位解析）：{payload}")
+                print(f"【MQTT-控制】收到控制指令回显（忽略定位解析）{device_info}: {payload}")
                 return
 
-            print(f"【MQTT-定位】收到定位数据 (主题: {topic}): {payload}")
-            if parse_location_data(payload):
+            print(f"【MQTT-定位】收到定位数据{device_info} (主题: {topic}): {payload}")
+            if parse_location_data(payload, device_id=device_id):
                 # 定位数据已处理
                 return
             else:
-                print(f"【MQTT-定位】未能解析定位数据: {payload}")
+                print(f"【MQTT-定位】未能解析定位数据{device_info}: {payload}")
                 return
 
         # 传感器数据主题
-        elif topic == MQTT_TOPIC:
+        elif topic in MQTT_TOPICS:
             # 解析传感器数据格式：T=24.61H=45.78%L=0.0R=1.01Y=3.4W=26.10P=1014.23
             m = PATTERN_DATA.fullmatch(payload)
             if m:
                 # 传感器数据：仅在蓝牙未连接时使用（避免重复数据）
-                if ble_connected:
-                    # 蓝牙已连接，忽略MQTT传感器数据（蓝牙优先）
+                # 注意：多设备模式下，即使蓝牙连接，MQTT的其他设备数据也应该处理
+                # 这里保持原有逻辑：如果蓝牙连接，只忽略MQTT数据（假设蓝牙是D01设备）
+                # 如果需要支持蓝牙多设备，需要进一步修改
+                if ble_connected and device_id == "D01":
+                    # 蓝牙已连接且是D01设备，忽略MQTT传感器数据（蓝牙优先）
                     return
 
-                print(f"【MQTT】收到传感器数据: {payload}")
+                print(f"【MQTT】收到传感器数据{device_info}: {payload}")
                 t = float(m.group(1))  # T = 温度
                 h = float(m.group(2))  # H = 湿度
                 l = float(m.group(3))  # L = 光照
@@ -813,15 +934,30 @@ def mqtt_on_message(client, userdata, msg):
                 t2 = float(m.group(6))  # W = 温度2
                 p = float(m.group(7))  # P = 气压
 
-                print(f"【MQTT】解析传感器数据 - T:{t}°C H:{h}% L:{l}lux Y:{ppm}ppm | R:{rs_ro} W:{t2}°C P:{p}hpa")
-                _enqueue_reading(t, h, l, ppm, rs_ro, t2, p, source="MQTT")
+                print(
+                    f"【MQTT】解析传感器数据{device_info} - T:{t}°C H:{h}% L:{l}lux Y:{ppm}ppm | R:{rs_ro} W:{t2}°C P:{p}hpa")
+                _enqueue_reading(t, h, l, ppm, rs_ro, t2, p, source="MQTT", device_id=device_id)
             else:
                 # 非传感器数据格式（可能是警告数据、定位数据或其他指令）
                 # 无论蓝牙是否连接都处理
-                print(f"【MQTT】收到其他消息: {payload}")
+                print(f"【MQTT】收到其他消息{device_info}: {payload}")
+
+                # 检查是否是onmessage或offmessage命令（使用消息发送模块处理）
+                global mqtt_message_sender
+                payload_normalized = payload.strip().lower()
+                if payload_normalized in ["onmessage", "offmessage"]:
+                    print(f"【MQTT】检测到消息命令: {payload_normalized}, 设备: {device_id}, mqtt_message_sender: {mqtt_message_sender is not None}")
+                    if mqtt_message_sender:
+                        result = mqtt_message_sender.handle_message(device_id, payload)
+                        print(f"【MQTT】handle_message 返回: {result}")
+                        if result:
+                            # 消息已被处理（onmessage或offmessage）
+                            return
+                    else:
+                        print(f"【MQTT】警告：mqtt_message_sender 未初始化")
 
                 # 首先尝试解析警告数据
-                if parse_warning_data(payload, source="MQTT"):
+                if parse_warning_data(payload, source="MQTT", device_id=device_id):
                     # 警告数据已处理
                     return
 
@@ -830,8 +966,8 @@ def mqtt_on_message(client, userdata, msg):
                     location_data = json.loads(payload)
                     if "lon" in location_data and "lat" in location_data:
                         # 这是JSON格式的定位数据
-                        print(f"【MQTT】检测到JSON格式定位数据，尝试解析...")
-                        if parse_location_data(payload):
+                        print(f"【MQTT】检测到JSON格式定位数据{device_info}，尝试解析...")
+                        if parse_location_data(payload, device_id=device_id):
                             # 定位数据已处理
                             return
                 except (json.JSONDecodeError, ValueError):
@@ -840,10 +976,10 @@ def mqtt_on_message(client, userdata, msg):
 
                 # 尝试解析定位信息（旧格式兼容）
                 if "GPS:" in payload or "LOC=" in payload or "POSITION:" in payload:
-                    parse_location_data(payload)
+                    parse_location_data(payload, device_id=device_id)
                 else:
                     # 其他未知格式的消息
-                    print(f"【MQTT】未知消息格式，已记录: {payload}")
+                    print(f"【MQTT】未知消息格式{device_info}，已记录: {payload}")
         else:
             # 未知主题
             print(f"【MQTT】收到未知主题的消息 (主题: {topic}): {payload}")
@@ -934,8 +1070,8 @@ async def mqtt_task():
                 continue
 
             print("【MQTT】✓ MQTT连接成功，持续保持连接（零延迟切换就绪）")
-            print("【MQTT】说明：MQTT持续订阅所有消息")
-            print("【MQTT】  - 传感器数据：蓝牙连接时忽略，蓝牙断开时立即接管")
+            print(f"【MQTT】说明：MQTT持续订阅所有消息（支持 {len(MQTT_DEVICES)} 个设备：{', '.join(MQTT_DEVICES)}）")
+            print("【MQTT】  - 传感器数据：蓝牙连接时忽略D01数据，蓝牙断开时立即接管；其他设备数据始终处理")
             print("【MQTT】  - 其他消息（如定位信息）：始终处理")
 
             # 保持运行，持续监控连接状态
@@ -1107,12 +1243,25 @@ async def ble_task():
 # ============ FastAPI 应用（lifespan，避免弃用警告） ============
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global main_loop, mq2_bootstrap_task, mq2_cycle_task, mq2_cycle_wakeup, mqtt_client
+    global main_loop, mq2_bootstrap_task, mq2_cycle_tasks, mq2_cycle_wakeups, mqtt_client
+    global bmp180_bootstrap_task, bmp180_cycle_tasks, bmp180_cycle_wakeups
+    global bh1750_bootstrap_task, bh1750_cycle_tasks, bh1750_cycle_wakeups
+    global mqtt_message_sender
     print("【服务】应用启动中...")
 
     # 保存主事件循环引用
     main_loop = asyncio.get_running_loop()
     print(f"【服务】事件循环已保存：{main_loop}")
+    
+    # 初始化MQTT消息发送管理器
+    mqtt_message_sender = MqttMessageSender(
+        get_mqtt_client=lambda: mqtt_client,
+        get_mqtt_connected=lambda: mqtt_connected,
+        get_connections=lambda: connections,
+        get_cmd_topic_map=lambda: MQTT_CMD_TOPIC_MAP,
+        get_main_loop=lambda: main_loop
+    )
+    print("【服务】MQTT消息发送管理器已初始化")
 
     # 初始化数据库连接池
     db = get_db_manager()
@@ -1138,23 +1287,61 @@ async def lifespan(app: FastAPI):
         print("【主控】已设为MQTT优先，主连MQTT，断线时自动切BLE备用。")
     asyncio.create_task(stats_task())
     mq2_bootstrap_task = asyncio.create_task(initialize_mq2_on_startup())
-    
+    bmp180_bootstrap_task = asyncio.create_task(initialize_bmp180_on_startup())
+    bh1750_bootstrap_task = asyncio.create_task(initialize_bh1750_on_startup())
+
     print("【服务】应用已启动。")
     yield
     print("【服务】应用正在关闭...")
 
-    if mq2_cycle_task:
-        mq2_cycle_task.cancel()
+    for task in list(mq2_cycle_tasks.values()):
+        task.cancel()
         try:
-            await mq2_cycle_task
+            await task
         except asyncio.CancelledError:
             pass
+    mq2_cycle_tasks.clear()
+    mq2_cycle_wakeups.clear()
     if mq2_bootstrap_task:
         mq2_bootstrap_task.cancel()
         try:
             await mq2_bootstrap_task
         except asyncio.CancelledError:
             pass
+    
+    for task in list(bmp180_cycle_tasks.values()):
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    bmp180_cycle_tasks.clear()
+    bmp180_cycle_wakeups.clear()
+    if bmp180_bootstrap_task:
+        bmp180_bootstrap_task.cancel()
+        try:
+            await bmp180_bootstrap_task
+        except asyncio.CancelledError:
+            pass
+    
+    for task in list(bh1750_cycle_tasks.values()):
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    bh1750_cycle_tasks.clear()
+    bh1750_cycle_wakeups.clear()
+    if bh1750_bootstrap_task:
+        bh1750_bootstrap_task.cancel()
+        try:
+            await bh1750_bootstrap_task
+        except asyncio.CancelledError:
+            pass
+
+    # 清理MQTT消息发送管理器
+    if mqtt_message_sender:
+        await mqtt_message_sender.cleanup()
 
     # 停止MQTT客户端
     if mqtt_client:
@@ -1178,16 +1365,35 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 app.mount("/resource", StaticFiles(directory=str(RESOURCE_DIR)), name="resource")
 
 
-# 首页：强制不缓存，防止浏览器看到旧 HTML，并在返回前注入高德地图 Key
-@app.get("/", tags=["首页-实时数据页"])
-async def index():
+# 设备总览首页：强制不缓存，防止浏览器看到旧 HTML
+@app.get("/", tags=["首页-设备总览"])
+async def device_index():
+    if not DEVICE_INDEX_FILE.exists():
+        return Response("未找到 web/devices.html", status_code=404)
+
+    try:
+        content = DEVICE_INDEX_FILE.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"【首页】读取 devices.html 失败：{e}")
+        return Response("读取首页失败", status_code=500)
+
+    return Response(
+        content,
+        media_type="text/html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
+
+
+# 实时数据页：保持原有逻辑，在返回前注入高德地图 Key
+@app.get("/realtime.html", tags=["实时数据页"])
+async def realtime_index():
     if not INDEX_FILE.exists():
         return Response("未找到 web/index.html", status_code=404)
 
     try:
         content = INDEX_FILE.read_text(encoding="utf-8")
     except Exception as e:
-        print(f"【首页】读取 index.html 失败：{e}")
+        print(f"【实时页】读取 index.html 失败：{e}")
         return Response("读取首页失败", status_code=500)
 
     amap_key = SECRETS.get("AMAP_WEB_KEY", "")
@@ -1202,42 +1408,51 @@ async def index():
     )
 
 
+# 这是给微信验证用的接口
+@app.get("/248a1604fe87bdaa034745d8ed14e74e.txt", tags=["微信验证"], response_class=PlainTextResponse)
+async def wechat_verify():
+    return "6daf8552330d70c4e2200cef15527c71411e42f6"
+
+
 # ============ 设备控制（BLE 优先，MQTT 兜底） ============
-async def send_command_ble_or_mqtt(command: str):
+async def send_command_ble_or_mqtt(command: str, device_id: str = "D01"):
     """
     发送命令到设备：优先通过BLE写入，失败或未连接则通过MQTT发布。
     返回字典包含方式、是否成功及附加信息。
     """
     global ble_connected, ble_client, mqtt_client, mqtt_connected
+    device_id = (device_id or "D01").upper()
 
-    # 优先尝试BLE
-    if ble_connected and ble_client is not None:
+    # 优先尝试BLE（仅D01支持BLE）
+    if device_id == "D01" and ble_connected and ble_client is not None:
         try:
             payload = (command + "\r\n").encode("utf-8")
             await ble_client.write_gatt_char(UART_RXTX_CHAR, payload, response=True)
-            print(f"【控制】✓ 通过 BLE 发送命令：{command}")
-            return {"success": True, "via": "BLE"}
+            print(f"【控制】✓ 通过 BLE 发送命令：{command} (设备: {device_id})")
+            return {"success": True, "via": "BLE", "device_id": device_id}
         except Exception as e:
-            print(f"【控制】通过 BLE 发送命令失败：{e}，将回退到MQTT")
+            print(f"【控制】通过 BLE 发送命令失败：{e}，设备 {device_id} 将回退到MQTT")
 
     # 回退到MQTT
     if mqtt_connected and mqtt_client is not None:
         try:
-            result = mqtt_client.publish(MQTT_CMD_TOPIC, command, qos=1)
+            target_topic = MQTT_CMD_TOPIC_MAP.get(device_id, MQTT_CMD_TOPIC)
+            result = mqtt_client.publish(target_topic, command, qos=1)
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                print(f"【控制】✓ 通过 MQTT 发送命令：{command} -> {MQTT_CMD_TOPIC}")
-                return {"success": True, "via": "MQTT", "topic": MQTT_CMD_TOPIC}
+                print(f"【控制】✓ 通过 MQTT 发送命令：{command} -> {target_topic}")
+                return {"success": True, "via": "MQTT", "topic": target_topic, "device_id": device_id}
             else:
                 print(f"【控制】❌ MQTT 发布失败，错误码: {result.rc}")
-                return {"success": False, "via": "MQTT", "error": f"publish rc={result.rc}"}
+                return {"success": False, "via": "MQTT", "error": f"publish rc={result.rc}", "device_id": device_id}
         except Exception as e:
             print(f"【控制】通过 MQTT 发送命令异常：{e}")
-            return {"success": False, "via": "MQTT", "error": str(e)}
+            return {"success": False, "via": "MQTT", "error": str(e), "device_id": device_id}
 
-    return {"success": False, "via": None, "error": "BLE和MQTT均未连接"}
+    return {"success": False, "via": None, "error": "BLE和MQTT均未连接", "device_id": device_id}
 
 
-async def wait_for_startup_transport(preferred: str, preferred_timeout: int = 60, remind_interval: int = 30) -> Optional[str]:
+async def wait_for_startup_transport(preferred: str, preferred_timeout: int = 60, remind_interval: int = 30) -> \
+        Optional[str]:
     """
     等待首选通信链路就绪（BLE/MQTT），必要时回退到可用链路。
     preferred_timeout 秒后若首选链路仍不可用且存在其他链路，则回退。
@@ -1272,78 +1487,176 @@ async def wait_for_startup_transport(preferred: str, preferred_timeout: int = 60
 
 async def initialize_mq2_on_startup():
     """
-    等待通信链路就绪后初始化MQ2，确保服务器启动时传感器保持开启。
+    等待通信链路就绪后初始化MQ2，将状态交给调度器统一开启。
     """
-    preferred = "BLE" if ble_or_mqtt_first == 0 else "MQTT"
-    transport = await wait_for_startup_transport(preferred)
-    if not transport:
-        print("【MQ2初始化】未等到可用通信链路，启动初始化已跳过。")
-        return
-
-    print(f"【MQ2初始化】通信链路 {transport} 已就绪，正在开启MQ2...")
-    result = await send_command_ble_or_mqtt("ONMQ2")
     db = get_db_manager()
+    # 确保 D01 优先，其它设备按配置依次处理
+    ordered_devices = get_managed_mq2_devices()
 
-    if result.get("success"):
-        via = result.get("via") or transport
+    for device in ordered_devices:
+        prefer = "BLE" if (device == "D01" and ble_or_mqtt_first == 0) else "MQTT"
+        transport = await wait_for_startup_transport(prefer)
+        if transport:
+            print(f"【MQ2初始化】通信链路 {transport} 已就绪（设备 {device}），交由调度器开启 MQ2。")
+            phase_message = f"等待调度器开启（链路：{transport}）"
+            via_label = transport
+        else:
+            print(f"【MQ2初始化】未等到可用通信链路（设备 {device}），调度器将持续重试。")
+            phase_message = "等待调度器开启（链路未就绪）"
+            via_label = None
+
         try:
             await db.set_sensor_state(
                 "MQ2",
-                "on",
-                via=via,
+                sensor_state="off",
+                via=via_label,
                 mode=DEFAULT_MQ2_MODE,
-                phase="on",
-                phase_message="启动完成，等待调度",
-                phase_until=None
+                phase="pending",
+                phase_message=phase_message,
+                phase_until=None,
+                device_id=device
             )
-            print("【MQ2初始化】✓ MQ2已开启。")
         except Exception as e:
-            print(f"【MQ2初始化】更新MQ2数据库状态失败：{e}")
-    else:
-        print(f"【MQ2初始化】❌ 开启MQ2失败：{result.get('error', '未知错误')}，已标记为关闭状态。")
-        try:
-            await db.set_sensor_state("MQ2", "off", mode=DEFAULT_MQ2_MODE, phase="error", phase_message="启动失败，等待重试", phase_until=None)
-        except Exception as e:
-            print(f"【MQ2初始化】记录失败：{e}")
+            print(f"【MQ2初始化】记录设备 {device} 状态失败：{e}")
 
     ensure_mq2_cycle_started()
+
+
+def ensure_bmp180_cycle_started():
+    """确保BMP180供电调度器仅针对需要的设备各启动一次。"""
+    global bmp180_cycle_tasks, bmp180_cycle_wakeups
+    for device in get_managed_mq2_devices():  # 复用MQ2的设备列表
+        task = bmp180_cycle_tasks.get(device)
+        if task and not task.done():
+            continue
+        if device not in bmp180_cycle_wakeups:
+            bmp180_cycle_wakeups[device] = asyncio.Event()
+        bmp180_cycle_tasks[device] = asyncio.create_task(bmp180_cycle_manager(device))
+
+
+def ensure_bh1750_cycle_started():
+    """确保BH1750供电调度器仅针对需要的设备各启动一次。"""
+    global bh1750_cycle_tasks, bh1750_cycle_wakeups
+    for device in get_managed_mq2_devices():  # 复用MQ2的设备列表
+        task = bh1750_cycle_tasks.get(device)
+        if task and not task.done():
+            continue
+        if device not in bh1750_cycle_wakeups:
+            bh1750_cycle_wakeups[device] = asyncio.Event()
+        bh1750_cycle_tasks[device] = asyncio.create_task(bh1750_cycle_manager(device))
+
+
+async def initialize_bmp180_on_startup():
+    """等待通信链路就绪后初始化BMP180，将状态交给调度器统一开启。"""
+    db = get_db_manager()
+    ordered_devices = get_managed_mq2_devices()
+
+    for device in ordered_devices:
+        prefer = "BLE" if (device == "D01" and ble_or_mqtt_first == 0) else "MQTT"
+        transport = await wait_for_startup_transport(prefer)
+        if transport:
+            print(f"【BMP180初始化】通信链路 {transport} 已就绪（设备 {device}），交由调度器开启 BMP180。")
+            phase_message = f"等待调度器开启（链路：{transport}）"
+            via_label = transport
+        else:
+            print(f"【BMP180初始化】未等到可用通信链路（设备 {device}），调度器将持续重试。")
+            phase_message = "等待调度器开启（链路未就绪）"
+            via_label = None
+
+        try:
+            await db.set_sensor_state(
+                "BMP180",
+                sensor_state="off",
+                via=via_label,
+                mode=DEFAULT_BMP180_MODE,
+                phase="pending",
+                phase_message=phase_message,
+                phase_until=None,
+                device_id=device
+            )
+        except Exception as e:
+            print(f"【BMP180初始化】记录设备 {device} 状态失败：{e}")
+
+    ensure_bmp180_cycle_started()
+
+
+async def initialize_bh1750_on_startup():
+    """等待通信链路就绪后初始化BH1750，将状态交给调度器统一开启。"""
+    db = get_db_manager()
+    ordered_devices = get_managed_mq2_devices()
+
+    for device in ordered_devices:
+        prefer = "BLE" if (device == "D01" and ble_or_mqtt_first == 0) else "MQTT"
+        transport = await wait_for_startup_transport(prefer)
+        if transport:
+            print(f"【BH1750初始化】通信链路 {transport} 已就绪（设备 {device}），交由调度器开启 BH1750。")
+            phase_message = f"等待调度器开启（链路：{transport}）"
+            via_label = transport
+        else:
+            print(f"【BH1750初始化】未等到可用通信链路（设备 {device}），调度器将持续重试。")
+            phase_message = "等待调度器开启（链路未就绪）"
+            via_label = None
+
+        try:
+            await db.set_sensor_state(
+                "BH1750",
+                sensor_state="off",
+                via=via_label,
+                mode=DEFAULT_BH1750_MODE,
+                phase="pending",
+                phase_message=phase_message,
+                phase_until=None,
+                device_id=device
+            )
+        except Exception as e:
+            print(f"【BH1750初始化】记录设备 {device} 状态失败：{e}")
+
+    ensure_bh1750_cycle_started()
 
 
 def get_mq2_mode_config(mode_key: str):
     return MQ2_MODE_CONFIG.get(mode_key, MQ2_MODE_CONFIG[DEFAULT_MQ2_MODE])
 
 
-async def wait_for_cycle_signal(timeout: float):
+def get_bmp180_mode_config(mode_key: str):
+    return MQ2_MODE_CONFIG.get(mode_key, MQ2_MODE_CONFIG[DEFAULT_BMP180_MODE])
+
+
+def get_bh1750_mode_config(mode_key: str):
+    return MQ2_MODE_CONFIG.get(mode_key, MQ2_MODE_CONFIG[DEFAULT_BH1750_MODE])
+
+
+async def wait_for_cycle_signal(timeout: float, device_id: str = "D01"):
     """
     在循环中等待调度唤醒或超时。
     """
     if timeout <= 0:
         return
-    global mq2_cycle_wakeup
-    if not mq2_cycle_wakeup:
-        await asyncio.sleep(timeout)
-        return
+    device_id = (device_id or "D01").upper()
+    event = mq2_cycle_wakeups.setdefault(device_id, asyncio.Event())
     try:
-        await asyncio.wait_for(mq2_cycle_wakeup.wait(), timeout=timeout)
+        await asyncio.wait_for(event.wait(), timeout=timeout)
     except asyncio.TimeoutError:
         pass
     else:
-        mq2_cycle_wakeup.clear()
+        event.clear()
 
 
-async def apply_mq2_phase(db, mode_key: str, target_phase: str, config: dict, duration: Optional[int]):
+async def apply_mq2_phase(db, mode_key: str, target_phase: str, config: dict, duration: Optional[int],
+                          device_id: str = "D01"):
     """
     根据目标阶段发送开启/关闭命令，并写入数据库状态。
     """
     command = "ONMQ2" if target_phase == "on" else "OFFMQ2"
-    result = await send_command_ble_or_mqtt(command)
+    result = await send_command_ble_or_mqtt(command, device_id=device_id)
     if not result.get("success"):
         message = f"{'开启' if target_phase == 'on' else '关闭'}失败：{result.get('error', '未知错误')}"
         await db.set_sensor_state(
             "MQ2",
             phase="error",
             phase_message=message,
-            phase_until=None
+            phase_until=None,
+            device_id=device_id
         )
         print(f"【MQ2调度】❌ {message}")
         return False
@@ -1358,36 +1671,48 @@ async def apply_mq2_phase(db, mode_key: str, target_phase: str, config: dict, du
         phase=target_phase,
         phase_message=f"{config['name']} · {status_text}",
         phase_until=phase_until,
-        next_run_time=phase_until
+        next_run_time=phase_until,
+        device_id=device_id
     )
     label = "开启" if target_phase == "on" else "关闭"
-    print(f"【MQ2调度】✓ {config['name']} {label}成功，下一次在 {('%.0f秒后' % duration) if duration else '持续运行'} 切换")
+    print(
+        f"【MQ2调度】✓ {config['name']} {label}成功，下一次在 {('%.0f秒后' % duration) if duration else '持续运行'} 切换")
     return True
 
 
-async def mq2_cycle_manager():
+async def mq2_cycle_manager(device_id: str):
     """
     简易供电调度器：根据模式在开/关之间循环。
     """
     db = get_db_manager()
-    print("【MQ2调度】简单供电调度器已启动")
+    device_id = (device_id or "D01").upper()
+    print(f"【MQ2调度】简单供电调度器已启动（设备 {device_id}）")
 
     while True:
         try:
-            record = await db.get_sensor_state("MQ2")
+            record = await db.get_sensor_state("MQ2", device_id=device_id)
             if not record:
-                await db.set_sensor_state("MQ2", "on", mode=DEFAULT_MQ2_MODE, phase="pending", phase_message="等待调度", phase_until=None)
+                await db.set_sensor_state(
+                    "MQ2",
+                    "on",
+                    mode=DEFAULT_MQ2_MODE,
+                    phase="pending",
+                    phase_message="等待调度",
+                    phase_until=None,
+                    device_id=device_id
+                )
                 await asyncio.sleep(2)
                 continue
 
             mode = record.get("mode") or DEFAULT_MQ2_MODE
             if mode not in MQ2_MODE_CONFIG:
                 mode = DEFAULT_MQ2_MODE
-                await db.set_sensor_state("MQ2", mode=mode)
+                await db.set_sensor_state("MQ2", mode=mode, device_id=device_id)
 
             config = get_mq2_mode_config(mode)
             phase = (record.get("phase") or "pending").lower()
             phase_until = record.get("phase_until")
+            state_device_id = record.get("device_id") or device_id
 
             if phase == "manual":
                 # 手动关闭期间保持关闭状态
@@ -1397,44 +1722,321 @@ async def mq2_cycle_manager():
                     phase="manual",
                     phase_message=record.get("phase_message") or "手动关闭",
                     phase_until=None,
-                    next_run_time=None
+                    next_run_time=None,
+                    device_id=state_device_id
                 )
-                await wait_for_cycle_signal(5)
+                await wait_for_cycle_signal(5, device_id=device_id)
                 continue
 
             if config.get("always_on"):
                 if phase != "on" or record.get("sensor_state") != "on":
-                    await apply_mq2_phase(db, mode, "on", config, duration=None)
+                    await apply_mq2_phase(db, mode, "on", config, duration=None, device_id=state_device_id)
                     continue
-                await wait_for_cycle_signal(10)
+                await wait_for_cycle_signal(10, device_id=device_id)
                 continue
 
             if phase not in ("on", "off") or not phase_until:
-                if await apply_mq2_phase(db, mode, "on", config, config["on_duration"]):
+                if await apply_mq2_phase(db, mode, "on", config, config["on_duration"], device_id=state_device_id):
                     continue
-                await wait_for_cycle_signal(5)
+                await wait_for_cycle_signal(5, device_id=device_id)
                 continue
 
             now = time.time()
             if now >= phase_until - 0.2:
                 next_phase = "off" if phase == "on" else "on"
                 duration = config["on_duration"] if next_phase == "on" else config["off_duration"]
-                if await apply_mq2_phase(db, mode, next_phase, config, duration):
+                if await apply_mq2_phase(db, mode, next_phase, config, duration, device_id=state_device_id):
                     continue
-                await wait_for_cycle_signal(5)
+                await wait_for_cycle_signal(5, device_id=device_id)
                 continue
 
             sleep_for = max(1, min(5, phase_until - now))
-            await wait_for_cycle_signal(sleep_for)
+            await wait_for_cycle_signal(sleep_for, device_id=device_id)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            print(f"【MQ2调度】❌ 调度器错误：{e}")
+            print(f"【MQ2调度】❌ 调度器错误（设备 {device_id}）：{e}")
             import traceback
             traceback.print_exc()
-            await wait_for_cycle_signal(5)
+            await wait_for_cycle_signal(5, device_id=device_id)
 
-    print("【MQ2调度】简单供电调度器已停止")
+    print(f"【MQ2调度】简单供电调度器已停止（设备 {device_id}）")
+
+
+# ============ BMP180 调度器 ============
+async def apply_bmp180_phase(db, mode_key: str, target_phase: str, config: dict, duration: Optional[int],
+                             device_id: str = "D01"):
+    """根据目标阶段发送开启/关闭命令，并写入数据库状态。"""
+    command = "ONBMP180" if target_phase == "on" else "OFFBMP180"
+    result = await send_command_ble_or_mqtt(command, device_id=device_id)
+    if not result.get("success"):
+        message = f"{'开启' if target_phase == 'on' else '关闭'}失败：{result.get('error', '未知错误')}"
+        await db.set_sensor_state(
+            "BMP180",
+            phase="error",
+            phase_message=message,
+            phase_until=None,
+            device_id=device_id
+        )
+        print(f"【BMP180调度】❌ {message}")
+        return False
+
+    phase_until = time.time() + duration if duration else None
+    status_text = "供电中" if target_phase == "on" else "休眠中"
+    await db.set_sensor_state(
+        "BMP180",
+        sensor_state=target_phase,
+        via=result.get("via"),
+        mode=mode_key,
+        phase=target_phase,
+        phase_message=f"{config['name']} · {status_text}",
+        phase_until=phase_until,
+        next_run_time=phase_until,
+        device_id=device_id
+    )
+    label = "开启" if target_phase == "on" else "关闭"
+    print(f"【BMP180调度】✓ {config['name']} {label}成功，下一次在 {('%.0f秒后' % duration) if duration else '持续运行'} 切换")
+    return True
+
+
+async def wait_for_bmp180_cycle_signal(timeout: float, device_id: str = "D01"):
+    """在循环中等待调度唤醒或超时。"""
+    if timeout <= 0:
+        return
+    device_id = (device_id or "D01").upper()
+    event = bmp180_cycle_wakeups.setdefault(device_id, asyncio.Event())
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    else:
+        event.clear()
+
+
+def wake_bmp180_cycle(device_id: str = "D01"):
+    """唤醒BMP180调度器。"""
+    device_id = (device_id or "D01").upper()
+    event = bmp180_cycle_wakeups.get(device_id)
+    if event:
+        event.set()
+
+
+async def bmp180_cycle_manager(device_id: str):
+    """简易供电调度器：根据模式在开/关之间循环。"""
+    db = get_db_manager()
+    device_id = (device_id or "D01").upper()
+    print(f"【BMP180调度】简单供电调度器已启动（设备 {device_id}）")
+
+    while True:
+        try:
+            record = await db.get_sensor_state("BMP180", device_id=device_id)
+            if not record:
+                await db.set_sensor_state(
+                    "BMP180",
+                    "on",
+                    mode=DEFAULT_BMP180_MODE,
+                    phase="pending",
+                    phase_message="等待调度",
+                    phase_until=None,
+                    device_id=device_id
+                )
+                await asyncio.sleep(2)
+                continue
+
+            mode = record.get("mode") or DEFAULT_BMP180_MODE
+            if mode not in MQ2_MODE_CONFIG:
+                mode = DEFAULT_BMP180_MODE
+                await db.set_sensor_state("BMP180", mode=mode, device_id=device_id)
+
+            config = get_bmp180_mode_config(mode)
+            phase = (record.get("phase") or "pending").lower()
+            phase_until = record.get("phase_until")
+            state_device_id = record.get("device_id") or device_id
+
+            if phase == "manual":
+                await db.set_sensor_state(
+                    "BMP180",
+                    sensor_state="off",
+                    phase="manual",
+                    phase_message=record.get("phase_message") or "手动关闭",
+                    phase_until=None,
+                    next_run_time=None,
+                    device_id=state_device_id
+                )
+                await wait_for_bmp180_cycle_signal(5, device_id=device_id)
+                continue
+
+            if config.get("always_on"):
+                if phase != "on" or record.get("sensor_state") != "on":
+                    await apply_bmp180_phase(db, mode, "on", config, duration=None, device_id=state_device_id)
+                    continue
+                await wait_for_bmp180_cycle_signal(10, device_id=device_id)
+                continue
+
+            if phase not in ("on", "off") or not phase_until:
+                if await apply_bmp180_phase(db, mode, "on", config, config["on_duration"], device_id=state_device_id):
+                    continue
+                await wait_for_bmp180_cycle_signal(5, device_id=device_id)
+                continue
+
+            now = time.time()
+            if now >= phase_until - 0.2:
+                next_phase = "off" if phase == "on" else "on"
+                duration = config["on_duration"] if next_phase == "on" else config["off_duration"]
+                if await apply_bmp180_phase(db, mode, next_phase, config, duration, device_id=state_device_id):
+                    continue
+                await wait_for_bmp180_cycle_signal(5, device_id=device_id)
+                continue
+
+            sleep_for = max(1, min(5, phase_until - now))
+            await wait_for_bmp180_cycle_signal(sleep_for, device_id=device_id)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"【BMP180调度】❌ 调度器错误（设备 {device_id}）：{e}")
+            import traceback
+            traceback.print_exc()
+            await wait_for_bmp180_cycle_signal(5, device_id=device_id)
+
+    print(f"【BMP180调度】简单供电调度器已停止（设备 {device_id}）")
+
+
+# ============ BH1750 调度器 ============
+async def apply_bh1750_phase(db, mode_key: str, target_phase: str, config: dict, duration: Optional[int],
+                              device_id: str = "D01"):
+    """根据目标阶段发送开启/关闭命令，并写入数据库状态。"""
+    command = "ONBH1750" if target_phase == "on" else "OFFBH1750"
+    result = await send_command_ble_or_mqtt(command, device_id=device_id)
+    if not result.get("success"):
+        message = f"{'开启' if target_phase == 'on' else '关闭'}失败：{result.get('error', '未知错误')}"
+        await db.set_sensor_state(
+            "BH1750",
+            phase="error",
+            phase_message=message,
+            phase_until=None,
+            device_id=device_id
+        )
+        print(f"【BH1750调度】❌ {message}")
+        return False
+
+    phase_until = time.time() + duration if duration else None
+    status_text = "供电中" if target_phase == "on" else "休眠中"
+    await db.set_sensor_state(
+        "BH1750",
+        sensor_state=target_phase,
+        via=result.get("via"),
+        mode=mode_key,
+        phase=target_phase,
+        phase_message=f"{config['name']} · {status_text}",
+        phase_until=phase_until,
+        next_run_time=phase_until,
+        device_id=device_id
+    )
+    label = "开启" if target_phase == "on" else "关闭"
+    print(f"【BH1750调度】✓ {config['name']} {label}成功，下一次在 {('%.0f秒后' % duration) if duration else '持续运行'} 切换")
+    return True
+
+
+async def wait_for_bh1750_cycle_signal(timeout: float, device_id: str = "D01"):
+    """在循环中等待调度唤醒或超时。"""
+    if timeout <= 0:
+        return
+    device_id = (device_id or "D01").upper()
+    event = bh1750_cycle_wakeups.setdefault(device_id, asyncio.Event())
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    else:
+        event.clear()
+
+
+def wake_bh1750_cycle(device_id: str = "D01"):
+    """唤醒BH1750调度器。"""
+    device_id = (device_id or "D01").upper()
+    event = bh1750_cycle_wakeups.get(device_id)
+    if event:
+        event.set()
+
+
+async def bh1750_cycle_manager(device_id: str):
+    """简易供电调度器：根据模式在开/关之间循环。"""
+    db = get_db_manager()
+    device_id = (device_id or "D01").upper()
+    print(f"【BH1750调度】简单供电调度器已启动（设备 {device_id}）")
+
+    while True:
+        try:
+            record = await db.get_sensor_state("BH1750", device_id=device_id)
+            if not record:
+                await db.set_sensor_state(
+                    "BH1750",
+                    "on",
+                    mode=DEFAULT_BH1750_MODE,
+                    phase="pending",
+                    phase_message="等待调度",
+                    phase_until=None,
+                    device_id=device_id
+                )
+                await asyncio.sleep(2)
+                continue
+
+            mode = record.get("mode") or DEFAULT_BH1750_MODE
+            if mode not in MQ2_MODE_CONFIG:
+                mode = DEFAULT_BH1750_MODE
+                await db.set_sensor_state("BH1750", mode=mode, device_id=device_id)
+
+            config = get_bh1750_mode_config(mode)
+            phase = (record.get("phase") or "pending").lower()
+            phase_until = record.get("phase_until")
+            state_device_id = record.get("device_id") or device_id
+
+            if phase == "manual":
+                await db.set_sensor_state(
+                    "BH1750",
+                    sensor_state="off",
+                    phase="manual",
+                    phase_message=record.get("phase_message") or "手动关闭",
+                    phase_until=None,
+                    next_run_time=None,
+                    device_id=state_device_id
+                )
+                await wait_for_bh1750_cycle_signal(5, device_id=device_id)
+                continue
+
+            if config.get("always_on"):
+                if phase != "on" or record.get("sensor_state") != "on":
+                    await apply_bh1750_phase(db, mode, "on", config, duration=None, device_id=state_device_id)
+                    continue
+                await wait_for_bh1750_cycle_signal(10, device_id=device_id)
+                continue
+
+            if phase not in ("on", "off") or not phase_until:
+                if await apply_bh1750_phase(db, mode, "on", config, config["on_duration"], device_id=state_device_id):
+                    continue
+                await wait_for_bh1750_cycle_signal(5, device_id=device_id)
+                continue
+
+            now = time.time()
+            if now >= phase_until - 0.2:
+                next_phase = "off" if phase == "on" else "on"
+                duration = config["on_duration"] if next_phase == "on" else config["off_duration"]
+                if await apply_bh1750_phase(db, mode, next_phase, config, duration, device_id=state_device_id):
+                    continue
+                await wait_for_bh1750_cycle_signal(5, device_id=device_id)
+                continue
+
+            sleep_for = max(1, min(5, phase_until - now))
+            await wait_for_bh1750_cycle_signal(sleep_for, device_id=device_id)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"【BH1750调度】❌ 调度器错误（设备 {device_id}）：{e}")
+            import traceback
+            traceback.print_exc()
+            await wait_for_bh1750_cycle_signal(5, device_id=device_id)
+
+    print(f"【BH1750调度】简单供电调度器已停止（设备 {device_id}）")
 
 
 @app.post("/api/mq2/switch", tags=["设备控制"])
@@ -1452,8 +2054,10 @@ async def switch_mq2(request: Request):
         if action not in ("on", "off"):
             return {"success": False, "error": "参数错误：action 仅支持 on/off"}
 
+        device_id = (body.get("device_id") or "D01").upper()
+
         command = "ONMQ2" if action == "on" else "OFFMQ2"
-        result = await send_command_ble_or_mqtt(command)
+        result = await send_command_ble_or_mqtt(command, device_id=device_id)
         db = get_db_manager()
         state_record = None
 
@@ -1467,7 +2071,8 @@ async def switch_mq2(request: Request):
                         phase="manual",
                         phase_message="手动关闭",
                         phase_until=None,
-                        next_run_time=None
+                        next_run_time=None,
+                        device_id=device_id
                     )
                 else:
                     await db.set_sensor_state(
@@ -1476,14 +2081,14 @@ async def switch_mq2(request: Request):
                         result.get("via"),
                         phase="pending",
                         phase_message="手动开启，等待调度",
-                        phase_until=None
+                        phase_until=None,
+                        device_id=device_id
                     )
             except Exception as e:
                 print(f"【控制】保存MQ2状态失败：{e}")
             finally:
-                state_record = await db.get_sensor_state("MQ2")
-            if mq2_cycle_wakeup:
-                mq2_cycle_wakeup.set()
+                state_record = await db.get_sensor_state("MQ2", device_id=device_id)
+            wake_mq2_cycle(device_id)
             return {
                 "success": True,
                 "action": action,
@@ -1492,10 +2097,11 @@ async def switch_mq2(request: Request):
                 "topic": result.get("topic"),
                 "state": (state_record or {}).get("sensor_state", action),
                 "updated_at": (state_record or {}).get("updated_at"),
-                "last_via": (state_record or {}).get("last_via")
+                "last_via": (state_record or {}).get("last_via"),
+                "device_id": device_id
             }
         else:
-            state_record = await db.get_sensor_state("MQ2")
+            state_record = await db.get_sensor_state("MQ2", device_id=device_id)
             return {
                 "success": False,
                 "action": action,
@@ -1504,7 +2110,8 @@ async def switch_mq2(request: Request):
                 "via": result.get("via"),
                 "state": (state_record or {}).get("sensor_state"),
                 "updated_at": (state_record or {}).get("updated_at"),
-                "last_via": (state_record or {}).get("last_via")
+                "last_via": (state_record or {}).get("last_via"),
+                "device_id": device_id
             }
     except Exception as e:
         print(f"【API】切换MQ2失败：{e}")
@@ -1512,13 +2119,14 @@ async def switch_mq2(request: Request):
 
 
 @app.get("/api/mq2/state", tags=["设备控制"])
-async def get_mq2_state():
+async def get_mq2_state(device_id: str = "D01"):
     """
     获取MQ2传感器当前的开关状态与模式
     """
     try:
+        device_id = (device_id or "D01").upper()
         db = get_db_manager()
-        record = await db.get_sensor_state("MQ2")
+        record = await db.get_sensor_state("MQ2", device_id=device_id)
         if record:
             mode = record.get("mode") or DEFAULT_MQ2_MODE
             config = get_mq2_mode_config(mode)
@@ -1541,7 +2149,8 @@ async def get_mq2_state():
                 "next_switch_in_sec": next_switch_in_sec,
                 "last_value": float(last_value) if last_value is not None else None,
                 "updated_at": record.get("updated_at"),
-                "last_via": record.get("last_via")
+                "last_via": record.get("last_via"),
+                "device_id": record.get("device_id") or device_id
             }
         default_config = get_mq2_mode_config(DEFAULT_MQ2_MODE)
         return {
@@ -1558,7 +2167,8 @@ async def get_mq2_state():
             "next_switch_in_sec": None,
             "last_value": None,
             "updated_at": None,
-            "last_via": None
+            "last_via": None,
+            "device_id": device_id
         }
     except Exception as e:
         print(f"【API】获取MQ2状态失败：{e}")
@@ -1580,10 +2190,18 @@ async def set_mq2_mode(request: Request):
                 "success": False,
                 "error": f"无效的模式：{mode}，可选：{', '.join(MQ2_MODE_CONFIG.keys())}"
             }
+        device_id = (body.get("device_id") or "D01").upper()
         db = get_db_manager()
-        await db.set_sensor_state("MQ2", sensor_state=None, mode=mode, phase="pending", phase_message="模式切换中", phase_until=None)
-        if mq2_cycle_wakeup:
-            mq2_cycle_wakeup.set()
+        await db.set_sensor_state(
+            "MQ2",
+            sensor_state=None,
+            mode=mode,
+            phase="pending",
+            phase_message="模式切换中",
+            phase_until=None,
+            device_id=device_id
+        )
+        wake_mq2_cycle(device_id)
         config = get_mq2_mode_config(mode)
         return {
             "success": True,
@@ -1591,13 +2209,503 @@ async def set_mq2_mode(request: Request):
             "mode_name": config["name"],
             "mode_icon": config["icon"],
             "mode_on_sec": config.get("on_duration"),
-            "mode_off_sec": config.get("off_duration")
+            "mode_off_sec": config.get("off_duration"),
+            "device_id": device_id
         }
     except Exception as e:
         print(f"【API】设置MQ2模式失败：{e}")
         import traceback
         traceback.print_exc()
         return {"success": False, "error": str(e)}
+
+
+# ============ BMP180 API ============
+@app.post("/api/bmp180/switch", tags=["设备控制"])
+async def switch_bmp180(request: Request):
+    """切换BMP180传感器开关。"""
+    try:
+        body = await request.json()
+        action = (body.get("action") or "").strip().lower()
+        if action not in ("on", "off"):
+            return {"success": False, "error": "参数错误：action 仅支持 on/off"}
+
+        device_id = (body.get("device_id") or "D01").upper()
+        command = "ONBMP180" if action == "on" else "OFFBMP180"
+        result = await send_command_ble_or_mqtt(command, device_id=device_id)
+        db = get_db_manager()
+        state_record = None
+
+        if result.get("success"):
+            try:
+                if action == "off":
+                    await db.set_sensor_state(
+                        "BMP180",
+                        "off",
+                        result.get("via"),
+                        phase="manual",
+                        phase_message="手动关闭",
+                        phase_until=None,
+                        next_run_time=None,
+                        device_id=device_id
+                    )
+                else:
+                    await db.set_sensor_state(
+                        "BMP180",
+                        "on",
+                        result.get("via"),
+                        phase="pending",
+                        phase_message="手动开启，等待调度",
+                        phase_until=None,
+                        device_id=device_id
+                    )
+            except Exception as e:
+                print(f"【控制】保存BMP180状态失败：{e}")
+            finally:
+                state_record = await db.get_sensor_state("BMP180", device_id=device_id)
+            wake_bmp180_cycle(device_id)
+            return {
+                "success": True,
+                "action": action,
+                "command": command,
+                "via": result.get("via"),
+                "topic": result.get("topic"),
+                "state": (state_record or {}).get("sensor_state", action),
+                "updated_at": (state_record or {}).get("updated_at"),
+                "last_via": (state_record or {}).get("last_via"),
+                "device_id": device_id
+            }
+        else:
+            state_record = await db.get_sensor_state("BMP180", device_id=device_id)
+            return {
+                "success": False,
+                "action": action,
+                "command": command,
+                "error": result.get("error", "未知错误"),
+                "via": result.get("via"),
+                "state": (state_record or {}).get("sensor_state"),
+                "updated_at": (state_record or {}).get("updated_at"),
+                "last_via": (state_record or {}).get("last_via"),
+                "device_id": device_id
+            }
+    except Exception as e:
+        print(f"【API】切换BMP180失败：{e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/bmp180/state", tags=["设备控制"])
+async def get_bmp180_state(device_id: str = "D01"):
+    """获取BMP180传感器当前的开关状态与模式"""
+    try:
+        device_id = (device_id or "D01").upper()
+        db = get_db_manager()
+        record = await db.get_sensor_state("BMP180", device_id=device_id)
+        if record:
+            mode = record.get("mode") or DEFAULT_BMP180_MODE
+            config = get_bmp180_mode_config(mode)
+            phase_until = record.get("phase_until")
+            next_switch_in_sec = None
+            if phase_until:
+                next_switch_in_sec = max(0, int(phase_until - time.time()))
+            last_value = record.get("last_value")
+            return {
+                "success": True,
+                "state": record.get("sensor_state", "on"),
+                "mode": mode,
+                "mode_name": config["name"],
+                "mode_icon": config["icon"],
+                "mode_on_sec": config.get("on_duration"),
+                "mode_off_sec": config.get("off_duration"),
+                "phase": record.get("phase"),
+                "phase_message": record.get("phase_message"),
+                "phase_until": phase_until,
+                "next_switch_in_sec": next_switch_in_sec,
+                "last_value": float(last_value) if last_value is not None else None,
+                "updated_at": record.get("updated_at"),
+                "last_via": record.get("last_via"),
+                "device_id": record.get("device_id") or device_id
+            }
+        default_config = get_bmp180_mode_config(DEFAULT_BMP180_MODE)
+        return {
+            "success": True,
+            "state": "on",
+            "mode": DEFAULT_BMP180_MODE,
+            "mode_name": default_config["name"],
+            "mode_icon": default_config["icon"],
+            "mode_on_sec": default_config.get("on_duration"),
+            "mode_off_sec": default_config.get("off_duration"),
+            "phase": "on",
+            "phase_message": "默认模式运行中",
+            "phase_until": None,
+            "next_switch_in_sec": None,
+            "last_value": None,
+            "updated_at": None,
+            "last_via": None,
+            "device_id": device_id
+        }
+    except Exception as e:
+        print(f"【API】获取BMP180状态失败：{e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/bmp180/mode", tags=["设备控制"])
+async def set_bmp180_mode(request: Request):
+    """设置BMP180运行模式：eco/balance/safe/always/dev"""
+    try:
+        body = await request.json()
+        mode = (body.get("mode") or "").strip().lower()
+        if mode not in MQ2_MODE_CONFIG:
+            return {
+                "success": False,
+                "error": f"无效的模式：{mode}，可选：{', '.join(MQ2_MODE_CONFIG.keys())}"
+            }
+        device_id = (body.get("device_id") or "D01").upper()
+        db = get_db_manager()
+        await db.set_sensor_state(
+            "BMP180",
+            sensor_state=None,
+            mode=mode,
+            phase="pending",
+            phase_message="模式切换中",
+            phase_until=None,
+            device_id=device_id
+        )
+        wake_bmp180_cycle(device_id)
+        config = get_bmp180_mode_config(mode)
+        return {
+            "success": True,
+            "mode": mode,
+            "mode_name": config["name"],
+            "mode_icon": config["icon"],
+            "mode_on_sec": config.get("on_duration"),
+            "mode_off_sec": config.get("off_duration"),
+            "device_id": device_id
+        }
+    except Exception as e:
+        print(f"【API】设置BMP180模式失败：{e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+# ============ BH1750 API ============
+@app.post("/api/bh1750/switch", tags=["设备控制"])
+async def switch_bh1750(request: Request):
+    """切换BH1750传感器开关。"""
+    try:
+        body = await request.json()
+        action = (body.get("action") or "").strip().lower()
+        if action not in ("on", "off"):
+            return {"success": False, "error": "参数错误：action 仅支持 on/off"}
+
+        device_id = (body.get("device_id") or "D01").upper()
+        command = "ONBH1750" if action == "on" else "OFFBH1750"
+        result = await send_command_ble_or_mqtt(command, device_id=device_id)
+        db = get_db_manager()
+        state_record = None
+
+        if result.get("success"):
+            try:
+                if action == "off":
+                    await db.set_sensor_state(
+                        "BH1750",
+                        "off",
+                        result.get("via"),
+                        phase="manual",
+                        phase_message="手动关闭",
+                        phase_until=None,
+                        next_run_time=None,
+                        device_id=device_id
+                    )
+                else:
+                    await db.set_sensor_state(
+                        "BH1750",
+                        "on",
+                        result.get("via"),
+                        phase="pending",
+                        phase_message="手动开启，等待调度",
+                        phase_until=None,
+                        device_id=device_id
+                    )
+            except Exception as e:
+                print(f"【控制】保存BH1750状态失败：{e}")
+            finally:
+                state_record = await db.get_sensor_state("BH1750", device_id=device_id)
+            wake_bh1750_cycle(device_id)
+            return {
+                "success": True,
+                "action": action,
+                "command": command,
+                "via": result.get("via"),
+                "topic": result.get("topic"),
+                "state": (state_record or {}).get("sensor_state", action),
+                "updated_at": (state_record or {}).get("updated_at"),
+                "last_via": (state_record or {}).get("last_via"),
+                "device_id": device_id
+            }
+        else:
+            state_record = await db.get_sensor_state("BH1750", device_id=device_id)
+            return {
+                "success": False,
+                "action": action,
+                "command": command,
+                "error": result.get("error", "未知错误"),
+                "via": result.get("via"),
+                "state": (state_record or {}).get("sensor_state"),
+                "updated_at": (state_record or {}).get("updated_at"),
+                "last_via": (state_record or {}).get("last_via"),
+                "device_id": device_id
+            }
+    except Exception as e:
+        print(f"【API】切换BH1750失败：{e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/bh1750/state", tags=["设备控制"])
+async def get_bh1750_state(device_id: str = "D01"):
+    """获取BH1750传感器当前的开关状态与模式"""
+    try:
+        device_id = (device_id or "D01").upper()
+        db = get_db_manager()
+        record = await db.get_sensor_state("BH1750", device_id=device_id)
+        if record:
+            mode = record.get("mode") or DEFAULT_BH1750_MODE
+            config = get_bh1750_mode_config(mode)
+            phase_until = record.get("phase_until")
+            next_switch_in_sec = None
+            if phase_until:
+                next_switch_in_sec = max(0, int(phase_until - time.time()))
+            last_value = record.get("last_value")
+            return {
+                "success": True,
+                "state": record.get("sensor_state", "on"),
+                "mode": mode,
+                "mode_name": config["name"],
+                "mode_icon": config["icon"],
+                "mode_on_sec": config.get("on_duration"),
+                "mode_off_sec": config.get("off_duration"),
+                "phase": record.get("phase"),
+                "phase_message": record.get("phase_message"),
+                "phase_until": phase_until,
+                "next_switch_in_sec": next_switch_in_sec,
+                "last_value": float(last_value) if last_value is not None else None,
+                "updated_at": record.get("updated_at"),
+                "last_via": record.get("last_via"),
+                "device_id": record.get("device_id") or device_id
+            }
+        default_config = get_bh1750_mode_config(DEFAULT_BH1750_MODE)
+        return {
+            "success": True,
+            "state": "on",
+            "mode": DEFAULT_BH1750_MODE,
+            "mode_name": default_config["name"],
+            "mode_icon": default_config["icon"],
+            "mode_on_sec": default_config.get("on_duration"),
+            "mode_off_sec": default_config.get("off_duration"),
+            "phase": "on",
+            "phase_message": "默认模式运行中",
+            "phase_until": None,
+            "next_switch_in_sec": None,
+            "last_value": None,
+            "updated_at": None,
+            "last_via": None,
+            "device_id": device_id
+        }
+    except Exception as e:
+        print(f"【API】获取BH1750状态失败：{e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/bh1750/mode", tags=["设备控制"])
+async def set_bh1750_mode(request: Request):
+    """设置BH1750运行模式：eco/balance/safe/always/dev"""
+    try:
+        body = await request.json()
+        mode = (body.get("mode") or "").strip().lower()
+        if mode not in MQ2_MODE_CONFIG:
+            return {
+                "success": False,
+                "error": f"无效的模式：{mode}，可选：{', '.join(MQ2_MODE_CONFIG.keys())}"
+            }
+        device_id = (body.get("device_id") or "D01").upper()
+        db = get_db_manager()
+        await db.set_sensor_state(
+            "BH1750",
+            sensor_state=None,
+            mode=mode,
+            phase="pending",
+            phase_message="模式切换中",
+            phase_until=None,
+            device_id=device_id
+        )
+        wake_bh1750_cycle(device_id)
+        config = get_bh1750_mode_config(mode)
+        return {
+            "success": True,
+            "mode": mode,
+            "mode_name": config["name"],
+            "mode_icon": config["icon"],
+            "mode_on_sec": config.get("on_duration"),
+            "mode_off_sec": config.get("off_duration"),
+            "device_id": device_id
+        }
+    except Exception as e:
+        print(f"【API】设置BH1750模式失败：{e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+# ============ BLE API ============
+@app.post("/api/ble/switch", tags=["设备控制"])
+async def switch_ble(request: Request):
+    """切换BLE蓝牙开关。"""
+    try:
+        body = await request.json()
+        action = (body.get("action") or "").strip().lower()
+        if action not in ("on", "off"):
+            return {"success": False, "error": "参数错误：action 仅支持 on/off"}
+
+        device_id = (body.get("device_id") or "D01").upper()
+        command = "ONBLE" if action == "on" else "OFFBLE"
+        result = await send_command_ble_or_mqtt(command, device_id=device_id)
+        db = get_db_manager()
+
+        if result.get("success"):
+            try:
+                await db.set_sensor_state(
+                    "BLE",
+                    "on" if action == "on" else "off",
+                    result.get("via"),
+                    device_id=device_id
+                )
+            except Exception as e:
+                print(f"【控制】保存BLE状态失败：{e}")
+            return {
+                "success": True,
+                "action": action,
+                "command": command,
+                "via": result.get("via"),
+                "topic": result.get("topic"),
+                "device_id": device_id
+            }
+        else:
+            return {
+                "success": False,
+                "action": action,
+                "command": command,
+                "error": result.get("error", "未知错误"),
+                "via": result.get("via"),
+                "device_id": device_id
+            }
+    except Exception as e:
+        print(f"【API】切换BLE失败：{e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/ble/state", tags=["设备控制"])
+async def get_ble_state(device_id: str = "D01"):
+    """获取BLE蓝牙状态"""
+    try:
+        device_id = (device_id or "D01").upper()
+        db = get_db_manager()
+        record = await db.get_sensor_state("BLE", device_id=device_id)
+        if record:
+            return {
+                "success": True,
+                "state": record.get("sensor_state", "on"),
+                "updated_at": record.get("updated_at"),
+                "last_via": record.get("last_via"),
+                "device_id": record.get("device_id") or device_id
+            }
+        return {
+            "success": True,
+            "state": "on",
+            "updated_at": None,
+            "last_via": None,
+            "device_id": device_id
+        }
+    except Exception as e:
+        print(f"【API】获取BLE状态失败：{e}")
+        return {"success": False, "error": str(e)}
+
+
+# ============ OLED API ============
+@app.post("/api/oled/switch", tags=["设备控制"])
+async def switch_oled(request: Request):
+    """切换OLED显示屏开关。"""
+    try:
+        body = await request.json()
+        action = (body.get("action") or "").strip().lower()
+        if action not in ("on", "off"):
+            return {"success": False, "error": "参数错误：action 仅支持 on/off"}
+
+        device_id = (body.get("device_id") or "D01").upper()
+        command = "ONOLED" if action == "on" else "OFFOLED"
+        result = await send_command_ble_or_mqtt(command, device_id=device_id)
+        db = get_db_manager()
+
+        if result.get("success"):
+            try:
+                await db.set_sensor_state(
+                    "OLED",
+                    "on" if action == "on" else "off",
+                    result.get("via"),
+                    device_id=device_id
+                )
+            except Exception as e:
+                print(f"【控制】保存OLED状态失败：{e}")
+            return {
+                "success": True,
+                "action": action,
+                "command": command,
+                "via": result.get("via"),
+                "topic": result.get("topic"),
+                "device_id": device_id
+            }
+        else:
+            return {
+                "success": False,
+                "action": action,
+                "command": command,
+                "error": result.get("error", "未知错误"),
+                "via": result.get("via"),
+                "device_id": device_id
+            }
+    except Exception as e:
+        print(f"【API】切换OLED失败：{e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/oled/state", tags=["设备控制"])
+async def get_oled_state(device_id: str = "D01"):
+    """获取OLED显示屏状态"""
+    try:
+        device_id = (device_id or "D01").upper()
+        db = get_db_manager()
+        record = await db.get_sensor_state("OLED", device_id=device_id)
+        if record:
+            return {
+                "success": True,
+                "state": record.get("sensor_state", "on"),
+                "updated_at": record.get("updated_at"),
+                "last_via": record.get("last_via"),
+                "device_id": record.get("device_id") or device_id
+            }
+        return {
+            "success": True,
+            "state": "on",
+            "updated_at": None,
+            "last_via": None,
+            "device_id": device_id
+        }
+    except Exception as e:
+        print(f"【API】获取OLED状态失败：{e}")
+        return {"success": False, "error": str(e)}
+
 
 # 数据分析页面
 @app.get("/analysis.html", tags=["数据分析页"])
@@ -1613,18 +2721,19 @@ async def analysis_page():
 
 # API：获取历史数据
 @app.get("/api/history", tags=["加载数据"])
-async def get_history(limit: int = 1000):
+async def get_history(limit: int = 1000, device_id: Optional[str] = None):
     """
     获取历史数据
     参数:
         limit: 获取的数据条数，默认1000条，传入-1表示全部数据（会自动使用聚合）
+        device_id: 设备ID筛选（可选），如：D01, D02
     """
     try:
         db = get_db_manager()
 
         # 如果limit为-1，使用时间范围查询并自动聚合
         if limit == -1:
-            stats = await db.get_statistics()
+            stats = await db.get_statistics(device_id=device_id)
             if stats and stats['total_records']:
                 total = int(stats['total_records'])
                 print(f"【API】请求加载全部数据，共 {total} 条，将使用聚合模式")
@@ -1695,7 +2804,7 @@ async def get_history(limit: int = 1000):
                         f"【API】数据密度：{data_density:.2f} 条/秒，目标点数：{target_points}，计算间隔：{int(time_span / target_points)}秒，实际间隔：{interval}秒")
 
                     print(f"【API】使用聚合模式，间隔：{interval}秒")
-                    data = await db.get_aggregated_data(start_time, end_time, interval)
+                    data = await db.get_aggregated_data(start_time, end_time, interval, device_id=device_id)
 
                     # 转换为前端需要的格式
                     readings = []
@@ -1710,6 +2819,7 @@ async def get_history(limit: int = 1000):
                             "pressure": float(row['pressure']) if row['pressure'] is not None else None,
                             "temp2": float(row['temp2']) if row['temp2'] is not None else None,
                             "rs_ro": float(row['rs_ro']) if row['rs_ro'] is not None else None,
+                            "device_id": device_id,  # 添加设备ID（如果提供了筛选参数）
                             "_aggregated": True,
                             "_interval": interval,
                             "_original_count": int(row['data_count']) if row.get('data_count') else 0
@@ -1730,7 +2840,7 @@ async def get_history(limit: int = 1000):
                 data = []
         else:
             # 获取最近N条，需要先降序取N条，再升序排列
-            data = await db.get_recent_data(limit)
+            data = await db.get_recent_data(limit, device_id=device_id)
             # 数据是[新->旧]，需要反转成[旧->新]
             data = list(reversed(data))
 
@@ -1746,7 +2856,8 @@ async def get_history(limit: int = 1000):
                 "smoke": float(row['smoke_ppm']) if row['smoke_ppm'] is not None else None,
                 "pressure": float(row['pressure']) if row['pressure'] is not None else None,
                 "temp2": float(row['temp2']) if row.get('temp2') is not None else None,
-                "rs_ro": float(row['rs_ro']) if row.get('rs_ro') is not None else None
+                "rs_ro": float(row['rs_ro']) if row.get('rs_ro') is not None else None,
+                "device_id": row.get('device_id') or device_id
             })
 
         print(f"【API】返回 {len(readings)} 条历史数据")
@@ -1760,7 +2871,8 @@ async def get_history(limit: int = 1000):
 
 # API：按时间范围获取历史数据（智能聚合）
 @app.get("/api/history/range", tags=["加载数据"])
-async def get_history_by_range(start: float, end: float, aggregate: bool = None, interval: int = None):
+async def get_history_by_range(start: float, end: float, aggregate: bool = None, interval: int = None,
+                               device_id: Optional[str] = None):
     """
     按时间范围获取历史数据，自动根据数据量决定是否聚合
     参数:
@@ -1768,14 +2880,16 @@ async def get_history_by_range(start: float, end: float, aggregate: bool = None,
         end: 结束时间戳（秒）
         aggregate: 是否强制使用聚合（None=自动判断，True=强制聚合，False=强制不聚合）
         interval: 聚合间隔（秒），默认自动计算
+        device_id: 设备ID筛选（可选），如：D01, D02
     """
     try:
         db = get_db_manager()
         print(f"【API】请求时间范围数据：{start} ~ {end}")
 
         # 先统计数据量
-        data_count = await db.count_data_by_time_range(start, end)
-        print(f"【API】时间范围内共有 {data_count} 条数据")
+        data_count = await db.count_data_by_time_range(start, end, device_id=device_id)
+        device_info = f" [设备: {device_id}]" if device_id else ""
+        print(f"【API】时间范围内共有 {data_count} 条数据{device_info}")
 
         # 数据量阈值：超过5000条自动使用聚合
         AUTO_AGGREGATE_THRESHOLD = 5000
@@ -1835,7 +2949,7 @@ async def get_history_by_range(start: float, end: float, aggregate: bool = None,
                     interval = 300  # 默认5分钟
 
             print(f"【API】使用聚合模式，间隔：{interval}秒")
-            data = await db.get_aggregated_data(start, end, interval)
+            data = await db.get_aggregated_data(start, end, interval, device_id=device_id)
 
             # 转换为前端需要的格式（使用平均值）
             readings = []
@@ -1850,6 +2964,7 @@ async def get_history_by_range(start: float, end: float, aggregate: bool = None,
                     "pressure": float(row['pressure']) if row['pressure'] is not None else None,
                     "temp2": float(row['temp2']) if row['temp2'] is not None else None,
                     "rs_ro": float(row['rs_ro']) if row['rs_ro'] is not None else None,
+                    "device_id": device_id,  # 添加设备ID（如果提供了筛选参数）
                     "_aggregated": True,  # 标记这是聚合数据
                     "_interval": interval,  # 聚合间隔
                     "_original_count": int(row['data_count']) if row.get('data_count') else 0  # 原始数据条数
@@ -1867,7 +2982,7 @@ async def get_history_by_range(start: float, end: float, aggregate: bool = None,
         else:
             # 不使用聚合，直接返回原始数据
             print(f"【API】使用原始数据模式")
-            data = await db.get_data_by_time_range(start, end)
+            data = await db.get_data_by_time_range(start, end, device_id=device_id)
 
             # 转换为前端需要的格式
             readings = []
@@ -1881,7 +2996,8 @@ async def get_history_by_range(start: float, end: float, aggregate: bool = None,
                     "smoke": float(row['smoke_ppm']) if row['smoke_ppm'] is not None else None,
                     "pressure": float(row['pressure']) if row['pressure'] is not None else None,
                     "temp2": float(row['temp2']) if row.get('temp2') is not None else None,
-                    "rs_ro": float(row['rs_ro']) if row.get('rs_ro') is not None else None
+                    "rs_ro": float(row['rs_ro']) if row.get('rs_ro') is not None else None,
+                    "device_id": row.get('device_id')  # 添加设备ID
                 })
 
             print(f"【API】返回 {len(readings)} 条原始数据")
@@ -2303,6 +3419,66 @@ async def get_connection_status():
     }
 
 
+@app.get("/api/devices", tags=["连接状态"])
+async def get_devices():
+    """
+    获取所有已配置设备及其在线状态
+    """
+    global ble_connected, mqtt_connected
+
+    devices = []
+    db = get_db_manager()
+
+    for dev_id in get_managed_mq2_devices():
+        has_ble = (dev_id == "D01")
+        has_mqtt = True  # 所有 Dxx 都走 MQTT
+
+        via_list = []
+        if has_ble and ble_connected:
+            via_list.append("BLE")
+        if mqtt_connected:
+            via_list.append("MQTT")
+
+        online = bool(via_list)
+
+        # 读取 MQ2 状态（可能为空）
+        mq2_state = await db.get_sensor_state("MQ2", device_id=dev_id)
+        if mq2_state:
+            mode = mq2_state.get("mode")
+            mode_cfg = get_mq2_mode_config(mode or DEFAULT_MQ2_MODE)
+            mq2_info = {
+                "sensor_state": mq2_state.get("sensor_state"),
+                "mode": mode or DEFAULT_MQ2_MODE,
+                "mode_name": mode_cfg["name"],
+                "mode_icon": mode_cfg["icon"],
+                "phase": mq2_state.get("phase"),
+                "phase_message": mq2_state.get("phase_message"),
+                "last_value": mq2_state.get("last_value")
+            }
+        else:
+            mq2_info = {}
+
+        # 从配置中获取设备名称，如果未配置则使用默认格式
+        device_name = DEVICE_NAMES.get(dev_id, f"环境监测设备 {dev_id}")
+
+        devices.append({
+            "id": dev_id,
+            "name": device_name,
+            "online": online,
+            "via": via_list,
+            "has_ble": has_ble,
+            "has_mqtt": has_mqtt,
+            "mq2": mq2_info,
+            "description": "本地实验室多传感器监测节点"
+        })
+
+    return {
+        "success": True,
+        "devices": devices,
+        "count": len(devices)
+    }
+
+
 # API：获取 AI 模型列表
 @app.get("/api/ai/models", tags=["AI API"])
 async def get_ai_models():
@@ -2327,7 +3503,8 @@ async def get_ai_models():
 
 # API：获取警告数据
 @app.get("/api/warnings", tags=["消息中心"])
-async def get_warnings(limit: int = 100, warning_type: str = None, is_resolved: str = None, date: str = None):
+async def get_warnings(limit: int = 100, warning_type: str = None, is_resolved: str = None, date: str = None,
+                       device_id: str = None):
     """
     获取警告数据
     
@@ -2336,6 +3513,7 @@ async def get_warnings(limit: int = 100, warning_type: str = None, is_resolved: 
         warning_type: 警告类型筛选（T/H/B/S/P），可选
         is_resolved: 是否已恢复筛选（0=未恢复, 1=已恢复），可选
         date: 日期筛选（格式：YYYY-MM-DD），可选
+        device_id: 设备ID筛选（如 D01、D02），可选
     """
     try:
         db = get_db_manager()
@@ -2348,11 +3526,16 @@ async def get_warnings(limit: int = 100, warning_type: str = None, is_resolved: 
             except (ValueError, TypeError):
                 resolved_param = None
 
+        device_param = None
+        if device_id:
+            device_param = device_id.strip().upper() or None
+
         warnings = await db.get_warning_data(
             limit=limit,
             warning_type=warning_type,
             is_resolved=resolved_param,
-            date=date
+            date=date,
+            device_id=device_param
         )
 
         # 转换为前端需要的格式
@@ -2366,7 +3549,8 @@ async def get_warnings(limit: int = 100, warning_type: str = None, is_resolved: 
                 "is_resolved": bool(warning['is_resolved']),
                 "warning_start_time": warning['warning_start_time'],
                 "warning_resolved_time": warning['warning_resolved_time'],
-                "created_at": str(warning['created_at'])
+                "created_at": str(warning['created_at']),
+                "device_id": warning.get('device_id') or "D01"
             })
 
         print(f"【API】返回 {len(result)} 条警告数据")
@@ -2389,7 +3573,7 @@ async def get_warnings(limit: int = 100, warning_type: str = None, is_resolved: 
 
 # API：获取有警告数据的日期列表
 @app.get("/api/warnings/dates", tags=["消息中心"])
-async def get_warning_dates():
+async def get_warning_dates(device_id: str = None):
     """
     获取所有有警告数据的日期列表及每个日期的消息数量
     
@@ -2398,7 +3582,10 @@ async def get_warning_dates():
     """
     try:
         db = get_db_manager()
-        dates = await db.get_warning_dates()
+        device_param = None
+        if device_id:
+            device_param = device_id.strip().upper() or None
+        dates = await db.get_warning_dates(device_param)
 
         print(f"【API】返回 {len(dates)} 个有数据的日期")
         return {
@@ -2419,15 +3606,34 @@ async def get_warning_dates():
 
 
 # API：请求定位信息
-@app.post("/api/location/query",tags=["定位信息"])
-async def query_location():
+@app.post("/api/location/query", tags=["定位信息"])
+async def query_location(request: Request = None):
     """
     请求定位信息
     发送"LBS?"命令到MQTT主题，等待设备返回定位数据
+    
+    参数:
+        device_id: 设备ID（可选），如：D01, D02。如果不提供，默认使用D01
     """
     global mqtt_client, mqtt_connected
 
     try:
+        # 获取设备ID参数
+        device_id = None
+        if request:
+            try:
+                body = await request.json()
+                device_id = body.get("device_id")
+            except:
+                pass
+
+        # 如果没有提供设备ID，使用默认值D01
+        if not device_id:
+            device_id = "D01"
+
+        # 规范化设备ID（转大写）
+        device_id = device_id.strip().upper()
+
         # 检查MQTT连接状态
         if not mqtt_connected or not mqtt_client:
             return {
@@ -2436,20 +3642,24 @@ async def query_location():
                 "message": "无法发送定位查询命令，MQTT连接未建立"
             }
 
+        # 根据设备ID获取对应的命令主题
+        target_topic = MQTT_CMD_TOPIC_MAP.get(device_id, MQTT_CMD_TOPIC)
+
         # 发送定位查询命令"LBS?"到定位命令主题
         # 注意：设备应该监听这个主题并返回定位数据到同一个主题
         command = "LBS?"
         try:
-            # 发布命令到定位命令主题
-            result = mqtt_client.publish(MQTT_CMD_TOPIC, command, qos=1)
+            # 发布命令到对应设备的定位命令主题
+            result = mqtt_client.publish(target_topic, command, qos=1)
 
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                print(f"【定位】✓ 已发送定位查询命令 \"{command}\" 到主题 {MQTT_CMD_TOPIC}")
+                print(f"【定位】✓ 已发送定位查询命令 \"{command}\" 到主题 {target_topic} [设备: {device_id}]")
                 return {
                     "success": True,
                     "message": "定位查询命令已发送",
                     "command": command,
-                    "topic": MQTT_CMD_TOPIC,
+                    "topic": target_topic,
+                    "device_id": device_id,
                     "note": "定位数据将通过WebSocket实时推送"
                 }
             else:

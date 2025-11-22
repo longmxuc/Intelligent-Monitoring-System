@@ -5,6 +5,37 @@
 
 // ==================== 工具函数 ====================
 
+function getSelectedDeviceId() {
+    const fromWindow = window.selectedDeviceId;
+    if (fromWindow) {
+        return String(fromWindow).toUpperCase();
+    }
+    try {
+        const params = new URLSearchParams(window.location.search || "");
+        const paramId = params.get("device_id");
+        if (paramId) {
+            return paramId.toUpperCase();
+        }
+    } catch {
+    }
+    return "D01";
+}
+
+function ensureDeviceParam(url) {
+    const deviceId = getSelectedDeviceId();
+    if (!deviceId) return url;
+    if (/([?&])device_id=/i.test(url)) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}device_id=${encodeURIComponent(deviceId)}`;
+}
+
+if (!window.getSelectedDeviceId) {
+    window.getSelectedDeviceId = getSelectedDeviceId;
+}
+if (!window.ensureDeviceParam) {
+    window.ensureDeviceParam = ensureDeviceParam;
+}
+
 /**
  * 简化 querySelector
  */
@@ -953,14 +984,217 @@ function showLoadForm(type) {
     document.getElementById('loadChoiceActions').style.display = 'none';
 
     const forms = {
-        'count': {id: 'loadFormCount', title: '按最近条数加载'},
-        'time': {id: 'loadFormTime', title: '按最近时间加载'},
-        'range': {id: 'loadFormRange', title: '自定义时间范围'}
+        'count': {id: 'loadFormCount', title: '按最近条数加载', deviceGroup: 'deviceSelectGroup'},
+        'time': {id: 'loadFormTime', title: '按最近时间加载', deviceGroup: 'deviceSelectGroupTime'},
+        'range': {id: 'loadFormRange', title: '自定义时间范围', deviceGroup: 'deviceSelectGroupRange'}
     };
 
     if (forms[type]) {
         document.getElementById(forms[type].id).style.display = 'block';
         document.getElementById('loadModalTitle').textContent = forms[type].title;
+        
+        // 如果是 analysis.html 页面，显示设备选择
+        const isAnalysisPage = window.location.pathname.includes('analysis.html');
+        const deviceGroup = document.getElementById(forms[type].deviceGroup);
+        if (deviceGroup) {
+            deviceGroup.style.display = isAnalysisPage ? 'block' : 'none';
+            if (isAnalysisPage) {
+                // 根据类型获取对应的 select ID
+                const selectIdMap = {
+                    'count': 'loadDeviceSelect',
+                    'time': 'loadDeviceSelectTime',
+                    'range': 'loadDeviceSelectRange'
+                };
+                const selectId = selectIdMap[type];
+                if (selectId) {
+                    updateDeviceSelectOptions(selectId);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 更新设备选择下拉框选项
+ */
+async function updateDeviceSelectOptions(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    
+    try {
+        const res = await fetch('/api/devices');
+        if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.devices) {
+                // 保留"全部设备"选项
+                select.innerHTML = '<option value="all">全部设备</option>';
+                // 添加各个设备选项
+                data.devices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.id || device.device_id || '';
+                    option.textContent = `${device.name || ('设备 ' + device.id)} (${device.id})`;
+                    select.appendChild(option);
+                });
+            }
+        }
+    } catch (error) {
+        console.warn('获取设备列表失败：', error);
+    }
+}
+
+/**
+ * 通用设备选择器（类似ControlPasswordPrompt的实现方式）
+ */
+const DevicePicker = {
+    modal: null,
+    hintEl: null,
+    listEl: null,
+    cancelBtn: null,
+    resolver: null,
+    devicesCache: [],
+    ensureTemplate() {
+        if (this.modal) return;
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = `
+        <div id="commonDeviceSelectModal" class="confirm-modal" aria-hidden="true">
+            <div class="confirm-content device-select-content" role="dialog" aria-modal="true" aria-labelledby="commonDeviceSelectTitle">
+                <div class="confirm-icon">📟</div>
+                <div class="confirm-title" id="commonDeviceSelectTitle">选择设备</div>
+                <div class="device-select-hint" id="commonDeviceSelectHint">请选择要进行操作的目标设备</div>
+                <div class="device-select-list" id="commonDeviceSelectList"></div>
+                <div class="confirm-actions">
+                    <button class="confirm-btn confirm-btn-cancel" data-device-select-cancel>取消</button>
+                </div>
+            </div>
+        </div>`;
+        document.body.appendChild(wrapper.firstElementChild);
+        this.modal = document.getElementById('commonDeviceSelectModal');
+        this.hintEl = document.getElementById('commonDeviceSelectHint');
+        this.listEl = document.getElementById('commonDeviceSelectList');
+        this.cancelBtn = this.modal.querySelector('[data-device-select-cancel]');
+        this.cancelBtn.addEventListener('click', () => this.handleCancel());
+        this.modal.addEventListener('click', (e) => {
+            if (e.target === this.modal) {
+                this.handleCancel();
+            }
+        });
+        // 阻止弹窗内容区域的点击事件冒泡
+        const content = this.modal.querySelector('.confirm-content');
+        if (content) {
+            content.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+    },
+    async loadDevices() {
+        try {
+            const res = await fetch('/api/devices');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error || '获取设备列表失败');
+            this.devicesCache = (data.devices || []).map((d) => {
+                const originalId = d.id || d.device_id || '';
+                const normalizedId = String(originalId).trim().toUpperCase();
+                return {
+                    ...d,
+                    id: normalizedId
+                };
+            });
+            return this.devicesCache;
+        } catch (error) {
+            console.error('加载设备列表失败：', error);
+            return [];
+        }
+    },
+    updateList(selectedDeviceId = null) {
+        if (!this.listEl) return;
+        // 确保selected和dev.id都是大写格式进行比较
+        const selected = selectedDeviceId ? String(selectedDeviceId).trim().toUpperCase() : '';
+        if (!this.devicesCache.length) {
+            this.listEl.innerHTML = '<div style="text-align: center; color: var(--muted); padding: 20px;">暂无可选设备</div>';
+            return;
+        }
+        this.listEl.innerHTML = this.devicesCache.map((dev) => {
+            // 确保dev.id也是大写格式进行比较，避免错误匹配
+            const devId = String(dev.id || '').trim().toUpperCase();
+            const isActive = selected && devId && selected === devId;
+            const transports = [];
+            if (dev.has_ble) transports.push('BLE');
+            if (dev.has_mqtt) transports.push('MQTT');
+            const viaList = dev.via || transports;
+            const viaText = viaList && viaList.length ? viaList.join(' / ') : '未知链路';
+            const status = dev.online ? '在线' : '离线';
+            return `
+                <button type="button" class="device-select-item ${isActive ? 'active' : ''}" data-device-id="${dev.id}">
+                    <div class="device-select-meta">
+                        <span class="device-select-name">${dev.name || ('设备 ' + dev.id)}</span>
+                        <span class="device-select-id">ID: ${dev.id}</span>
+                    </div>
+                    <span class="device-select-status">${status}</span>
+                </button>
+            `;
+        }).join('');
+        // 绑定点击事件
+        this.listEl.querySelectorAll('.device-select-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const deviceId = item.getAttribute('data-device-id');
+                this.handleSelect(deviceId);
+            });
+        });
+    },
+    async open(hintText, selectedDeviceId = null) {
+        this.ensureTemplate();
+        // 加载设备列表
+        await this.loadDevices();
+        if (!this.devicesCache.length) {
+            if (typeof window.showNotification === 'function') {
+                window.showNotification('暂无可选设备', true);
+            }
+            return Promise.resolve(null);
+        }
+        return new Promise((resolve) => {
+            this.resolver = resolve;
+            if (this.hintEl) {
+                this.hintEl.textContent = hintText || '请选择要操作的设备';
+            }
+            // 不传递selectedDeviceId，避免默认选中某个设备（用户还没选择）
+            this.updateList(null);
+            this.modal.classList.add('show');
+            this.modal.setAttribute('aria-hidden', 'false');
+        });
+    },
+    close() {
+        if (!this.modal) return;
+        this.modal.classList.remove('show');
+        this.modal.setAttribute('aria-hidden', 'true');
+        this.resolver = null;
+    },
+    handleSelect(deviceId) {
+        if (!this.resolver) return;
+        const resolve = this.resolver;
+        this.close();
+        resolve(deviceId || null);
+    },
+    handleCancel() {
+        if (!this.resolver) {
+            this.close();
+            return;
+        }
+        const resolve = this.resolver;
+        this.close();
+        resolve(null);
+    }
+};
+
+// 导出到全局，供其他页面使用
+if (typeof window !== 'undefined') {
+    // 如果页面已经有openDevicePicker函数（如devices.html），则优先使用页面的实现
+    // 否则使用通用的DevicePicker
+    if (!window.openDevicePicker) {
+        window.openDevicePicker = function(hintText, selectedDeviceId) {
+            return DevicePicker.open(hintText, selectedDeviceId);
+        };
     }
 }
 
@@ -982,17 +1216,40 @@ async function loadByCount() {
         return;
     }
 
-    console.log(`📊 按条数加载：最近 ${count} 条数据`);
+    // 获取设备选择（仅在 analysis.html 页面）
+    const isAnalysisPage = window.location.pathname.includes('analysis.html');
+    let deviceId = null;
+    if (isAnalysisPage) {
+        const deviceSelect = document.getElementById('loadDeviceSelect');
+        const deviceGroup = document.getElementById('deviceSelectGroup');
+        if (deviceSelect && deviceGroup && deviceGroup.style.display !== 'none') {
+            deviceId = deviceSelect.value;
+            if (deviceId === 'all') deviceId = null;
+        }
+    }
+
+    console.log(`📊 按条数加载：最近 ${count} 条数据${deviceId ? ` (设备: ${deviceId})` : ' (全部设备)'}`);
     closeLoadModal();
 
     // 检查数据量是否过大
     if (count > 20000) {
         console.warn(`⚠️ 数据量过大: ${count} 条`);
-        showLargeDataWarning(count, {limit: count, customUrl: null});
+        showLargeDataWarning(count, {limit: count, customUrl: null, deviceId: deviceId});
         return;
     }
 
-    await executeDataLoad(`/api/history?limit=${count}`);
+    let url = `/api/history?limit=${count}`;
+    if (deviceId) {
+        url += `&device_id=${encodeURIComponent(deviceId)}`;
+    }
+    // 注意：在 analysis.html 页面，如果 deviceId 是 null（全部设备），不应该添加 device_id 参数
+    
+    // 保存设备信息到全局变量（用于 AI 分析）
+    if (isAnalysisPage && window.setAnalysisDeviceInfo) {
+        await window.setAnalysisDeviceInfo(deviceId);
+    }
+    
+    await executeDataLoad(url);
 }
 
 /**
@@ -1028,11 +1285,32 @@ async function loadByTime() {
         minute: '分钟', hour: '小时', day: '天', month: '月'
     };
 
-    console.log(`⏱️ 按时间加载：最近 ${value} ${unitNames[unit]}`);
+    // 获取设备选择（仅在 analysis.html 页面）
+    const isAnalysisPage = window.location.pathname.includes('analysis.html');
+    let deviceId = null;
+    if (isAnalysisPage) {
+        const deviceSelect = document.getElementById('loadDeviceSelectTime');
+        const deviceGroup = document.getElementById('deviceSelectGroupTime');
+        if (deviceSelect && deviceGroup && deviceGroup.style.display !== 'none') {
+            deviceId = deviceSelect.value;
+            if (deviceId === 'all') deviceId = null;
+        }
+    }
+
+    console.log(`⏱️ 按时间加载：最近 ${value} ${unitNames[unit]}${deviceId ? ` (设备: ${deviceId})` : ' (全部设备)'}`);
 
     const endTime = Math.floor(Date.now() / 1000);
     const startTime = endTime - seconds;
-    const apiUrl = `/api/history/range?start=${startTime}&end=${endTime}`;
+    let apiUrl = `/api/history/range?start=${startTime}&end=${endTime}`;
+    if (deviceId) {
+        apiUrl += `&device_id=${encodeURIComponent(deviceId)}`;
+    }
+    // 注意：在 analysis.html 页面，如果 deviceId 是 null（全部设备），不应该添加 device_id 参数
+    
+    // 保存设备信息到全局变量（用于 AI 分析）
+    if (isAnalysisPage && window.setAnalysisDeviceInfo) {
+        await window.setAnalysisDeviceInfo(deviceId);
+    }
 
     try {
         // 显示检查进度
@@ -1092,9 +1370,30 @@ async function loadByRange() {
         return;
     }
 
-    console.log(`📅 按自定义范围加载：${startTimeStr} ~ ${endTimeStr}`);
+    // 获取设备选择（仅在 analysis.html 页面）
+    const isAnalysisPage = window.location.pathname.includes('analysis.html');
+    let deviceId = null;
+    if (isAnalysisPage) {
+        const deviceSelect = document.getElementById('loadDeviceSelectRange');
+        const deviceGroup = document.getElementById('deviceSelectGroupRange');
+        if (deviceSelect && deviceGroup && deviceGroup.style.display !== 'none') {
+            deviceId = deviceSelect.value;
+            if (deviceId === 'all') deviceId = null;
+        }
+    }
 
-    const apiUrl = `/api/history/range?start=${startTime}&end=${endTime}`;
+    console.log(`📅 按自定义范围加载：${startTimeStr} ~ ${endTimeStr}${deviceId ? ` (设备: ${deviceId})` : ' (全部设备)'}`);
+
+    let apiUrl = `/api/history/range?start=${startTime}&end=${endTime}`;
+    if (deviceId) {
+        apiUrl += `&device_id=${encodeURIComponent(deviceId)}`;
+    }
+    // 注意：在 analysis.html 页面，如果 deviceId 是 null（全部设备），不应该添加 device_id 参数
+    
+    // 保存设备信息到全局变量（用于 AI 分析）
+    if (isAnalysisPage && window.setAnalysisDeviceInfo) {
+        await window.setAnalysisDeviceInfo(deviceId);
+    }
 
     try {
         // 显示检查进度
@@ -1137,11 +1436,86 @@ async function loadByRange() {
 /**
  * 显示加载全部确认框
  */
-function showLoadAllConfirm() {
+async function showLoadAllConfirm() {
     closeLoadModal();
+    
+    // 如果是 analysis.html 页面，先让用户选择设备
+    const isAnalysisPage = window.location.pathname.includes('analysis.html');
+    if (isAnalysisPage) {
+        // 创建一个临时的设备选择确认框
+        const deviceSelectHtml = `
+            <div id="loadAllDeviceSelectModal" class="load-modal" style="display: block;">
+                <div class="load-content">
+                    <div class="load-title">
+                        <span>📊</span>
+                        <span>选择设备</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">选择要加载数据的设备</label>
+                        <div class="form-input-group">
+                            <select class="form-input" id="loadAllDeviceSelect">
+                                <option value="all">全部设备</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="load-actions">
+                        <button class="load-btn load-btn-secondary" onclick="closeLoadAllDeviceSelect()">取消</button>
+                        <button class="load-btn load-btn-primary" onclick="confirmLoadAllDeviceSelect()">继续</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // 如果已存在，先移除
+        const existing = document.getElementById('loadAllDeviceSelectModal');
+        if (existing) existing.remove();
+        
+        document.body.insertAdjacentHTML('beforeend', deviceSelectHtml);
+        await updateDeviceSelectOptions('loadAllDeviceSelect');
+        return;
+    }
+    
     // 不需要调用 ensureConfirmModalExists()，因为 index.html 中已经有 confirmModal 了
     const modal = document.getElementById('confirmModal');
     if (modal) {
+        modal.classList.add('show');
+    } else {
+        console.error('❌ 找不到 confirmModal 元素');
+    }
+}
+
+/**
+ * 关闭加载全部数据的设备选择框
+ */
+function closeLoadAllDeviceSelect() {
+    const modal = document.getElementById('loadAllDeviceSelectModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+/**
+ * 确认加载全部数据的设备选择
+ */
+async function confirmLoadAllDeviceSelect() {
+    const deviceSelect = document.getElementById('loadAllDeviceSelect');
+    if (!deviceSelect) return;
+    
+    let deviceId = deviceSelect.value;
+    if (deviceId === 'all') deviceId = null;
+    
+    closeLoadAllDeviceSelect();
+    
+    // 保存设备信息到全局变量（用于 AI 分析）
+    if (window.setAnalysisDeviceInfo) {
+        await window.setAnalysisDeviceInfo(deviceId);
+    }
+    
+    // 显示确认框
+    const modal = document.getElementById('confirmModal');
+    if (modal) {
+        // 保存设备ID到确认框，供 confirmLoadAll 使用
+        modal.dataset.selectedDeviceId = deviceId || 'all';
         modal.classList.add('show');
     } else {
         console.error('❌ 找不到 confirmModal 元素');
@@ -1163,8 +1537,26 @@ function closeConfirmModal() {
  */
 async function confirmLoadAll() {
     closeConfirmModal();
-    console.log('🔄 开始加载全部历史数据...');
-    await executeDataLoad('/api/history?limit=-1');
+    
+    // 获取设备选择（仅在 analysis.html 页面）
+    const isAnalysisPage = window.location.pathname.includes('analysis.html');
+    let deviceId = null;
+    if (isAnalysisPage) {
+        const modal = document.getElementById('confirmModal');
+        if (modal && modal.dataset.selectedDeviceId) {
+            deviceId = modal.dataset.selectedDeviceId === 'all' ? null : modal.dataset.selectedDeviceId;
+        }
+    }
+    
+    console.log(`🔄 开始加载全部历史数据${deviceId ? ` (设备: ${deviceId})` : ' (全部设备)'}...`);
+    
+    let url = '/api/history?limit=-1';
+    if (deviceId) {
+        url += `&device_id=${encodeURIComponent(deviceId)}`;
+    }
+    // 注意：在 analysis.html 页面，如果 deviceId 是 null（全部设备），不应该添加 device_id 参数
+    
+    await executeDataLoad(url);
 }
 
 /**
@@ -1217,9 +1609,25 @@ async function confirmLargeDataLoad() {
         return;
     }
 
-    const {limit, customUrl} = pendingLoadParams;
-    console.log('📋 加载参数:', {limit, customUrl});
-    const url = customUrl || `/api/history?limit=${limit}`;
+    const {limit, customUrl, deviceId} = pendingLoadParams;
+    console.log('📋 加载参数:', {limit, customUrl, deviceId});
+    
+    // 构建 URL
+    let url = customUrl || `/api/history?limit=${limit}`;
+    const isAnalysisPage = window.location.pathname.includes('analysis.html');
+    
+    // 如果有设备ID，添加到URL
+    if (deviceId) {
+        const separator = url.includes('?') ? '&' : '?';
+        url += `${separator}device_id=${encodeURIComponent(deviceId)}`;
+    }
+    // 注意：在 analysis.html 页面，如果 deviceId 是 null（全部设备），不应该添加 device_id 参数
+    
+    // 保存设备信息到全局变量（用于 AI 分析）
+    if (isAnalysisPage && window.setAnalysisDeviceInfo) {
+        await window.setAnalysisDeviceInfo(deviceId || null);
+    }
+    
     console.log('🌐 请求URL:', url);
 
     // 关闭弹窗（此时参数已经保存到局部变量）
@@ -1257,7 +1665,14 @@ async function executeDataLoad(url, startProgress = 0) {
         closeConfirmModal();
         closeLargeDataWarning();
 
-        console.log('📡 请求API:', url);
+        // 检查 URL 是否已经包含 device_id 参数
+        // 如果已经包含，说明是明确选择的结果（全部设备或指定设备），不应该再调用 ensureDeviceParam
+        // 另外，如果在 analysis.html 页面且 URL 中没有 device_id，说明用户明确选择了"全部设备"，也不应该调用 ensureDeviceParam
+        const hasDeviceIdParam = /([?&])device_id=/i.test(url);
+        const isAnalysisPage = window.location.pathname.includes('analysis.html');
+        const shouldUseEnsureDeviceParam = ensureDeviceParam && !hasDeviceIdParam && !isAnalysisPage;
+        const finalUrl = shouldUseEnsureDeviceParam ? ensureDeviceParam(url) : url;
+        console.log('📡 请求API:', finalUrl);
 
         // 显示进度条（无论startProgress是多少，都重新显示）
         showLoadingProgress('正在加载数据...', startProgress);
@@ -1267,7 +1682,7 @@ async function executeDataLoad(url, startProgress = 0) {
         const progressStep = (60 - startProgress) / 3;
         updateLoadingProgress('正在请求数据...', startProgress + progressStep);
 
-        const response = await fetch(url);
+        const response = await fetch(finalUrl);
 
         // 更新进度：数据接收中
         updateLoadingProgress('正在接收数据...', startProgress + progressStep * 2);
@@ -1425,6 +1840,14 @@ function ensureLoadModalExists() {
 
             <!-- 按最近条数加载表单 -->
             <div id="loadFormCount" class="load-form-view" style="display: none;">
+                <div id="deviceSelectGroup" class="form-group" style="display: none;">
+                    <label class="form-label">选择设备</label>
+                    <div class="form-input-group">
+                        <select class="form-input" id="loadDeviceSelect">
+                            <option value="all">全部设备</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="form-group">
                     <label class="form-label">数据条数</label>
                     <div class="form-input-group">
@@ -1440,6 +1863,14 @@ function ensureLoadModalExists() {
 
             <!-- 按时间段加载表单 -->
             <div id="loadFormTime" class="load-form-view" style="display: none;">
+                <div id="deviceSelectGroupTime" class="form-group" style="display: none;">
+                    <label class="form-label">选择设备</label>
+                    <div class="form-input-group">
+                        <select class="form-input" id="loadDeviceSelectTime">
+                            <option value="all">全部设备</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="form-group">
                     <label class="form-label">时间数量</label>
                     <div class="form-input-group">
@@ -1460,6 +1891,14 @@ function ensureLoadModalExists() {
 
             <!-- 自定义时间范围表单 -->
             <div id="loadFormRange" class="load-form-view" style="display: none;">
+                <div id="deviceSelectGroupRange" class="form-group" style="display: none;">
+                    <label class="form-label">选择设备</label>
+                    <div class="form-input-group">
+                        <select class="form-input" id="loadDeviceSelectRange">
+                            <option value="all">全部设备</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="form-group">
                     <label class="form-label">开始时间</label>
                     <input type="datetime-local" class="form-input" id="loadStartTime">
@@ -1848,7 +2287,11 @@ function generateHelpModalHTML() {
                         <span>系统功能</span>
                     </div>
                     <div class="help-section-content">
-                        本系统是基于 STM32 和物联网的智能环境监测系统，可以实时监测和分析环境数据。
+                        本系统是基于 STM32 和物联网的智能环境监测系统，可以实时监测和分析环境数据，支持多设备管理。
+                        <div class="help-feature">
+                            <div class="help-feature-title">📱 设备总览</div>
+                            <div class="help-feature-desc">首页显示所有已配置的设备，实时显示每个设备的在线状态、最新数据和警告信息，点击设备卡片可查看详细数据</div>
+                        </div>
                         <div class="help-feature">
                             <div class="help-feature-title">📊 实时监测</div>
                             <div class="help-feature-desc">实时显示温度、湿度、亮度、烟雾浓度和大气压数据，通过 WebSocket 自动更新，支持蓝牙和MQTT双数据源</div>
@@ -1859,11 +2302,15 @@ function generateHelpModalHTML() {
                         </div>
                         <div class="help-feature">
                             <div class="help-feature-title">📉 数据分析</div>
-                            <div class="help-feature-desc">统计分析功能，查看平均值、最大值、最小值等数据指标，支持多维度数据分析</div>
+                            <div class="help-feature-desc">统计分析功能，查看平均值、最大值、最小值等数据指标，支持多维度数据分析，集成AI助手提供智能分析</div>
                         </div>
                         <div class="help-feature">
                             <div class="help-feature-title">💾 历史数据</div>
                             <div class="help-feature-desc">支持多种方式加载历史数据：按条数、按时间段或自定义范围，系统会根据数据量自动优化加载速度</div>
+                        </div>
+                        <div class="help-feature">
+                            <div class="help-feature-title">🔋 省电控制</div>
+                            <div class="help-feature-desc">支持远程控制MQ2烟雾传感器、BMP180气压传感器、BH1750亮度传感器、BLE蓝牙和OLED显示屏的开关，提供多种省电模式（省电/平衡/安全/不省电）</div>
                         </div>
                         <div class="help-feature">
                             <div class="help-feature-title">📍 设备定位</div>
@@ -1871,11 +2318,11 @@ function generateHelpModalHTML() {
                         </div>
                         <div class="help-feature">
                             <div class="help-feature-title">🔔 消息中心</div>
-                            <div class="help-feature-desc">实时接收来自STM32的异常数据警告，支持警告类型筛选、状态筛选，所有警告记录保存在数据库中</div>
+                            <div class="help-feature-desc">实时接收来自STM32的异常数据警告，支持警告类型筛选、状态筛选、日期筛选，所有警告记录保存在数据库中</div>
                         </div>
                         <div class="help-feature">
                             <div class="help-feature-title">⚠️ 智能预警</div>
-                            <div class="help-feature-desc">当传感器数据超出安全阈值时，系统会自动发出警告，卡片会显示橙色或红色边框提醒</div>
+                            <div class="help-feature-desc">当传感器数据超出安全阈值时，系统会自动发出警告，卡片会显示橙色或红色边框提醒，危险状态会有跑马灯效果</div>
                         </div>
                     </div>
                 </div>
@@ -1887,13 +2334,15 @@ function generateHelpModalHTML() {
                     </div>
                     <div class="help-section-content">
                         <ul class="help-list">
+                            <li><strong>设备总览页面</strong>：首页显示所有设备，点击设备卡片可进入实时数据页面</li>
                             <li>系统会自动连接 WebSocket 服务器，连接成功后状态会显示为"已连接"</li>
                             <li>点击连接状态徽章可以查看详细连接信息（WebSocket、蓝牙、MQTT）</li>
-                            <li>主页实时显示最新的传感器数据和趋势变化</li>
+                            <li>实时数据页面显示最新的传感器数据和趋势变化</li>
                             <li>点击图表右上角的 ⤢ 按钮可以半全屏查看图表详情</li>
                             <li>使用鼠标滚轮或双指手势可以缩放图表</li>
-                            <li>点击右上角"⚙️ 功能"菜单可以访问更多功能</li>
+                            <li>点击右上角"⚙️ 功能"菜单可以访问更多功能（数据分析、消息中心、省电控制等）</li>
                             <li>点击"📊 加载数据"可以从数据库加载历史数据</li>
+                            <li>点击"🔋 省电控制"可以远程控制传感器和模块的开关</li>
                         </ul>
                     </div>
                 </div>
@@ -1905,14 +2354,17 @@ function generateHelpModalHTML() {
                     </div>
                     <div class="help-section-content">
                         <ul class="help-list">
-                            <li><strong>数据分析</strong>：查看详细的统计分析和数据报告，包括各传感器的平均值、最大值、最小值等</li>
+                            <li><strong>设备总览</strong>：首页显示所有已配置的设备，实时显示在线状态、最新数据和警告信息</li>
+                            <li><strong>数据分析</strong>：查看详细的统计分析和数据报告，包括各传感器的平均值、最大值、最小值等，集成AI助手提供智能分析</li>
                             <li><strong>加载数据</strong>：从数据库加载历史数据到图表中，支持按条数、按时间段、自定义范围或加载全部</li>
-                            <li><strong>消息中心</strong>：查看所有警告消息，支持按类型和状态筛选，标记已读/未读</li>
-                            <li><strong>设备定位</strong>：获取并显示设备的地理位置，支持在地图上查看</li>
+                            <li><strong>省电控制</strong>：远程控制MQ2、BMP180、BH1750、BLE和OLED的开关，支持多种省电模式（省电/平衡/安全/不省电）</li>
+                            <li><strong>消息中心</strong>：查看所有警告消息，支持按类型、状态和日期筛选，所有警告记录保存在数据库中</li>
+                            <li><strong>设备定位</strong>：获取并显示设备的地理位置，支持在地图上查看，集成高德地图API</li>
                             <li><strong>切换主题</strong>：在明亮和深色主题之间切换，支持跟随系统设置</li>
                             <li><strong>科普按钮 (i)</strong>：点击每个传感器旁边的 i 按钮了解相关知识</li>
                             <li><strong>趋势指示</strong>：每个数据卡片下方显示数据变化趋势（上升/下降/稳定）</li>
                             <li><strong>连接状态</strong>：实时显示WebSocket、蓝牙和MQTT连接状态，支持查看详细信息</li>
+                            <li><strong>多设备支持</strong>：系统支持同时管理多个设备（D01、D02等），每个设备独立显示数据</li>
                         </ul>
                     </div>
                 </div>
@@ -2495,8 +2947,12 @@ function initFunctionMenu() {
 
         // 点击页面其他地方关闭菜单
         document.addEventListener('click', function (e) {
-            // 如果点击的不是菜单相关元素，则关闭菜单
-            if (!menuBtn.contains(e.target) && !menuDropdown.contains(e.target)) {
+            // 排除设备选择弹窗和其他弹窗
+            const deviceSelectModal = qs('#deviceSelectModal');
+            const isInDeviceSelectModal = deviceSelectModal && (deviceSelectModal.contains(e.target) || deviceSelectModal === e.target);
+            
+            // 如果点击的不是菜单相关元素，也不是设备选择弹窗，则关闭菜单
+            if (!menuBtn.contains(e.target) && !menuDropdown.contains(e.target) && !isInDeviceSelectModal) {
                 if (menuDropdown.classList.contains('show')) {
                     menuDropdown.classList.remove('show');
                     menuBtn.classList.remove('active');
@@ -2571,6 +3027,15 @@ window.createFullscreenChart = createFullscreenChart;
 
 // 将数据加载相关函数暴露到全局作用域
 window.openLoadModal = openLoadModal;
+window.showLoadForm = showLoadForm;
+window.backToChoice = backToChoice;
+window.loadByCount = loadByCount;
+window.loadByTime = loadByTime;
+window.loadByRange = loadByRange;
+window.showLoadAllConfirm = showLoadAllConfirm;
+window.confirmLoadAll = confirmLoadAll;
+window.closeLoadAllDeviceSelect = closeLoadAllDeviceSelect;
+window.confirmLoadAllDeviceSelect = confirmLoadAllDeviceSelect;
 window.closeLargeDataWarning = closeLargeDataWarning;
 window.confirmLargeDataLoad = confirmLargeDataLoad;
 
@@ -2603,6 +3068,20 @@ window.MessageCenter = {
     refreshInterval: null, // 自动刷新定时器
     selectedDate: null, // 选中的日期（格式：YYYY-MM-DD）
     warningDates: [], // 有数据的日期列表（格式：[{date: "YYYY-MM-DD", count: 数量}, ...]）
+    currentDeviceId: null, // 当前筛选的设备ID（大写，如 D01）
+    beforeOpenHook: null, // 自定义打开前钩子
+
+    /**
+     * 设置打开前钩子
+     * @param {Function|null} hook
+     */
+    setBeforeOpenHook: function (hook) {
+        if (typeof hook === 'function') {
+            this.beforeOpenHook = hook;
+        } else {
+            this.beforeOpenHook = null;
+        }
+    },
 
     /**
      * 从localStorage加载已读消息ID
@@ -2642,12 +3121,90 @@ window.MessageCenter = {
     },
 
     /**
+     * 获取当前活动的设备ID（优先使用人工选择的，其次使用页面上下文）
+     */
+    getActiveDeviceId: function () {
+        if (this.currentDeviceId) {
+            return this.currentDeviceId;
+        }
+        if (typeof window.getSelectedDeviceId === 'function') {
+            const fallback = window.getSelectedDeviceId();
+            if (fallback) {
+                return String(fallback).trim().toUpperCase();
+            }
+        }
+        return null;
+    },
+
+    /**
+     * 设置消息中心的设备筛选
+     * @param {string|null} deviceId - 设备ID（如 D01），为空则查看全部
+     */
+    setDeviceFilter: function (deviceId) {
+        const normalized = deviceId && String(deviceId).trim()
+            ? String(deviceId).trim().toUpperCase()
+            : null;
+        this.currentDeviceId = normalized;
+        this.updateDeviceIndicator();
+        const panel = qs('#messageCenterPanel');
+        if (panel && panel.classList.contains('open')) {
+            this.loadWarningDates();
+            this.loadWarningMessages();
+        }
+    },
+
+    /**
+     * 更新消息中心标题旁的设备指示器
+     */
+    updateDeviceIndicator: function () {
+        const panel = qs('#messageCenterPanel');
+        if (!panel) return;
+        const header = panel.querySelector('.message-center-title');
+        if (!header) return;
+        let indicator = header.querySelector('.message-device-indicator');
+        if (!indicator) {
+            indicator = document.createElement('span');
+            indicator.className = 'message-device-indicator';
+            indicator.style.marginLeft = '8px';
+            indicator.style.fontSize = '12px';
+            indicator.style.color = 'var(--muted)';
+            indicator.style.display = 'none';
+            header.appendChild(indicator);
+        }
+        const deviceId = this.getActiveDeviceId();
+        if (deviceId) {
+            indicator.textContent = `· 设备 ${deviceId}`;
+            indicator.style.display = 'inline-flex';
+        } else {
+            indicator.textContent = '';
+            indicator.style.display = 'none';
+        }
+    },
+
+    /**
      * 打开消息中心
      */
-    open: function () {
+    open: async function () {
+        if (typeof this.beforeOpenHook === 'function') {
+            try {
+                const hookResult = await this.beforeOpenHook();
+                if (hookResult === false) {
+                    return;
+                }
+                if (hookResult && typeof hookResult === 'string' && typeof this.setDeviceFilter === 'function') {
+                    this.setDeviceFilter(hookResult);
+                } else if (hookResult && typeof hookResult === 'object' && hookResult.deviceId && typeof this.setDeviceFilter === 'function') {
+                    this.setDeviceFilter(hookResult.deviceId);
+                }
+            } catch (error) {
+                console.error('消息中心 beforeOpenHook 执行失败:', error);
+                return;
+            }
+        }
         const panel = qs('#messageCenterPanel');
         if (panel) {
             panel.classList.add('open');
+            this.updateDeviceIndicator();
             // 初始化日历（如果还没有创建）
             this.initCalendar();
             // 加载有数据的日期列表
@@ -2717,6 +3274,8 @@ window.MessageCenter = {
             if (type) params.append('warning_type', type);
             if (status !== '') params.append('is_resolved', status);
             if (this.selectedDate) params.append('date', this.selectedDate);
+            const deviceId = this.getActiveDeviceId();
+            if (deviceId) params.append('device_id', deviceId);
 
             const response = await fetch(`/api/warnings?${params.toString()}`);
             const result = await response.json();
@@ -2725,6 +3284,7 @@ window.MessageCenter = {
 
             if (result.success && result.data && result.data.length > 0) {
                 this.renderWarningMessages(result.data);
+                this.updateDeviceIndicator();
             } else {
                 emptyEl.style.display = 'block';
             }
@@ -3334,7 +3894,11 @@ window.MessageCenter = {
      */
     loadWarningDates: async function () {
         try {
-            const response = await fetch('/api/warnings/dates');
+            const deviceId = this.getActiveDeviceId();
+            const url = deviceId
+                ? `/api/warnings/dates?device_id=${encodeURIComponent(deviceId)}`
+                : '/api/warnings/dates';
+            const response = await fetch(url);
             const result = await response.json();
             if (result.success && result.data) {
                 this.warningDates = result.data;
@@ -3473,6 +4037,7 @@ window.MessageCenter = {
 
 const PowerControlModal = {
     overlay: null,
+    currentDeviceId: null, // 保存当前选择的设备ID
     init() {
         this.overlay = document.getElementById('powerControlModal');
         if (!this.overlay) return;
@@ -3483,11 +4048,67 @@ const PowerControlModal = {
             if (e.target === this.overlay) this.close();
         });
         this.overlay.querySelectorAll('[data-power-sensor]').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 const sensor = btn.dataset.powerSensor;
                 this.close();
-                if (sensor === 'mq2' && typeof window.openOverlayMQ2 === 'function') {
-                    window.openOverlayMQ2();
+                
+                // 使用在打开省电控制中心时已选择的设备ID
+                let deviceId = this.currentDeviceId;
+                
+                // 如果没有保存的设备ID，才需要选择设备（这种情况理论上不应该发生）
+                if (!deviceId) {
+                    if (typeof window.openDevicePicker === 'function') {
+                        // 获取当前已选择的设备ID（如果有）
+                        const currentDeviceId = window.getSelectedDeviceId ? window.getSelectedDeviceId() : (window.selectedDeviceId || null);
+                        deviceId = await window.openDevicePicker('请选择要控制的设备', currentDeviceId);
+                        if (!deviceId) return; // 用户取消选择
+                        // 保存选择的设备ID
+                        this.currentDeviceId = deviceId;
+                    } else {
+                        // 如果没有设备选择器，使用当前页面的设备ID或默认值
+                        deviceId = window.getSelectedDeviceId ? window.getSelectedDeviceId() : (window.selectedDeviceId || 'D01');
+                        this.currentDeviceId = deviceId;
+                    }
+                }
+                
+                const normalizedDeviceId = deviceId ? deviceId.toString().trim().toUpperCase() : null;
+                
+                // 根据传感器类型打开对应的控制面板
+                if (sensor === 'mq2') {
+                    if (window.MQ2Control && normalizedDeviceId) {
+                        window.MQ2Control.setDeviceId(normalizedDeviceId);
+                    }
+                    if (typeof window.openOverlayMQ2 === 'function') {
+                        window.openOverlayMQ2();
+                    }
+                } else if (sensor === 'bmp180') {
+                    if (window.BMP180Control && normalizedDeviceId) {
+                        window.BMP180Control.setDeviceId(normalizedDeviceId);
+                    }
+                    if (typeof window.openOverlayBMP180 === 'function') {
+                        window.openOverlayBMP180();
+                    }
+                } else if (sensor === 'bh1750') {
+                    if (window.BH1750Control && normalizedDeviceId) {
+                        window.BH1750Control.setDeviceId(normalizedDeviceId);
+                    }
+                    if (typeof window.openOverlayBH1750 === 'function') {
+                        window.openOverlayBH1750();
+                    }
+                } else if (sensor === 'ble') {
+                    if (window.BLEControl && normalizedDeviceId) {
+                        window.BLEControl.setDeviceId(normalizedDeviceId);
+                    }
+                    if (typeof window.openOverlayBLE === 'function') {
+                        window.openOverlayBLE();
+                    }
+                } else if (sensor === 'oled') {
+                    if (window.OLEDControl && normalizedDeviceId) {
+                        window.OLEDControl.setDeviceId(normalizedDeviceId);
+                    }
+                    if (typeof window.openOverlayOLED === 'function') {
+                        window.openOverlayOLED();
+                    }
                 }
             });
         });
@@ -3500,8 +4121,88 @@ const PowerControlModal = {
             });
         });
     },
-    open() {
+    async open(providedDeviceId = null) {
         if (!this.overlay) return;
+        
+        // 如果已经提供了设备ID（例如从devices.html传递过来的），直接使用，不要覆盖
+        let deviceId = providedDeviceId;
+        
+        // 如果没有提供设备ID，尝试从多个来源获取
+        if (!deviceId) {
+            // 1. 优先检查URL中是否有device_id参数（index.html等页面）
+            const urlParams = new URLSearchParams(window.location.search || "");
+            const urlDeviceId = urlParams.get("device_id");
+            
+            if (urlDeviceId) {
+                // 如果URL中有device_id参数，直接使用，不需要再选择设备
+                deviceId = urlDeviceId.toUpperCase();
+            } else {
+                // 2. 尝试从全局变量获取（index.html等页面会设置）
+                if (window.getSelectedDeviceId && typeof window.getSelectedDeviceId === 'function') {
+                    deviceId = window.getSelectedDeviceId();
+                } else if (window.selectedDeviceId) {
+                    deviceId = window.selectedDeviceId;
+                }
+                
+                // 3. 如果还是没有，尝试从localStorage获取（devices.html等页面会保存）
+                if (!deviceId) {
+                    try {
+                        const saved = localStorage.getItem('device_overview_selected');
+                        if (saved) {
+                            deviceId = saved.toString().trim().toUpperCase();
+                        }
+                    } catch (e) {
+                        // 忽略localStorage错误
+                    }
+                }
+                
+                // 4. 如果仍然没有设备ID，设置为null，让用户在点击传感器按钮时再选择
+                if (deviceId) {
+                    deviceId = deviceId.toString().trim().toUpperCase();
+                }
+            }
+        } else {
+            // 如果提供了设备ID，确保格式正确
+            deviceId = deviceId.toString().trim().toUpperCase();
+        }
+        
+        // 保存选择的设备ID，供传感器按钮点击时使用
+        this.currentDeviceId = deviceId;
+        
+        // 设置 MQ2Control 的设备ID（确保使用正确的设备ID）
+        // 注意：使用this.currentDeviceId而不是局部变量deviceId，避免闭包问题
+        const normalizedDeviceId = deviceId ? deviceId.toString().trim().toUpperCase() : null;
+        
+        // 确保MQ2Control已初始化（如果还没初始化，先初始化）
+        if (!window.MQ2Control) {
+            // 尝试初始化MQ2Control
+            if (typeof ensureMq2OverlayTemplate === 'function') {
+                ensureMq2OverlayTemplate();
+            }
+            if (window.MQ2Control && typeof window.MQ2Control.init === 'function') {
+                window.MQ2Control.init();
+            }
+        }
+        
+        const setMQ2DeviceId = (targetDeviceId) => {
+            if (window.MQ2Control && targetDeviceId) {
+                const normalized = targetDeviceId.toString().trim().toUpperCase();
+                window.MQ2Control.setDeviceId(normalized);
+                // setDeviceId()已经会更新标题，这里不需要再调用updateTitleWithDeviceName()
+            } else if (!window.MQ2Control) {
+                // 如果MQ2Control还没初始化，等待一下再设置
+                setTimeout(() => {
+                    // 使用this.currentDeviceId确保使用正确的设备ID
+                    const deviceIdToSet = this.currentDeviceId || targetDeviceId;
+                    if (window.MQ2Control && deviceIdToSet) {
+                        const normalized = deviceIdToSet.toString().trim().toUpperCase();
+                        window.MQ2Control.setDeviceId(normalized);
+                    }
+                }, 200);
+            }
+        };
+        setMQ2DeviceId(normalizedDeviceId);
+        
         this.overlay.classList.add('show');
         this.overlay.setAttribute('aria-hidden', 'false');
     },
@@ -3611,6 +4312,34 @@ function ensurePowerControlTemplate() {
                         </div>
                         <div class="power-device-badge">节能调度</div>
                     </button>
+                    <button class="power-device-card" type="button" data-power-sensor="bmp180">
+                        <div class="power-device-info">
+                            <div class="power-device-name">🌡️ BMP180 气压传感器</div>
+                            <div class="power-device-meta">四种省电模式 · 默认不省电</div>
+                        </div>
+                        <div class="power-device-badge">节能调度</div>
+                    </button>
+                    <button class="power-device-card" type="button" data-power-sensor="bh1750">
+                        <div class="power-device-info">
+                            <div class="power-device-name">💡 BH1750 亮度传感器</div>
+                            <div class="power-device-meta">四种省电模式 · 默认不省电</div>
+                        </div>
+                        <div class="power-device-badge">节能调度</div>
+                    </button>
+                    <button class="power-device-card" type="button" data-power-sensor="ble">
+                        <div class="power-device-info">
+                            <div class="power-device-name">📶 BLE 蓝牙</div>
+                            <div class="power-device-meta">远程控制 · 开启/关闭</div>
+                        </div>
+                        <div class="power-device-badge">远程控制</div>
+                    </button>
+                    <button class="power-device-card" type="button" data-power-sensor="oled">
+                        <div class="power-device-info">
+                            <div class="power-device-name">📺 OLED 显示屏</div>
+                            <div class="power-device-meta">远程控制 · 开启/关闭</div>
+                        </div>
+                        <div class="power-device-badge">远程控制</div>
+                    </button>
                 </div>
             </div>
         </div>
@@ -3620,6 +4349,7 @@ function ensurePowerControlTemplate() {
 
 const MQ2Control = {
     overlay: null,
+    deviceId: null, // 当前控制的设备ID
     state: 'unknown',
     stateUpdatedAt: null,
     lastVia: null,
@@ -3631,6 +4361,78 @@ const MQ2Control = {
     countdownRefreshAt: 0,
     pendingTimer: null,
     refreshPromise: null,
+    setDeviceId(deviceId) {
+        const normalizedId = deviceId ? deviceId.toString().trim().toUpperCase() : null;
+        this.deviceId = normalizedId;
+        
+        // 立即更新标题显示设备信息
+        if (this.deviceId) {
+            // 如果overlay已经存在，立即更新标题
+            if (this.overlay) {
+                const titleEl = document.getElementById('modalTitleMQ2');
+                if (titleEl) {
+                    // 立即更新标题，不等待异步获取设备名称
+                    titleEl.textContent = `🔥 ${this.deviceId} 烟雾传感器控制`;
+                    // 异步获取设备名称（可选）
+                    this.updateTitleWithDeviceName();
+                }
+            }
+        }
+    },
+    async updateTitleWithDeviceName() {
+        if (!this.deviceId) return;
+        try {
+            const res = await fetch('/api/devices');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.success && data.devices) {
+                    const device = data.devices.find(d => {
+                        const id = (d.id || d.device_id || '').toString().trim().toUpperCase();
+                        return id === this.deviceId;
+                    });
+                    const titleEl = document.getElementById('modalTitleMQ2');
+                    if (titleEl) {
+                        // 格式：D02 烟雾传感器控制
+                        titleEl.textContent = `${this.deviceId} 烟雾传感器控制`;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('获取设备名称失败：', error);
+            const titleEl = document.getElementById('modalTitleMQ2');
+            if (titleEl) {
+                // 格式：🔥 D02 烟雾传感器控制
+                titleEl.textContent = `🔥 ${this.deviceId} 烟雾传感器控制`;
+            }
+        }
+    },
+    getDeviceId() {
+        // 优先使用已设置的设备ID（这是最重要的，确保使用用户选择的设备ID）
+        if (this.deviceId) {
+            return this.deviceId;
+        }
+        // 如果没有设置设备ID，尝试从当前页面获取（作为后备方案，但不应该依赖这个）
+        // 注意：这个后备方案可能会导致问题，因为可能获取到错误的设备ID
+        if (window.getSelectedDeviceId) {
+            const id = window.getSelectedDeviceId();
+            if (id) {
+                const normalizedId = id.toString().trim().toUpperCase();
+                this.deviceId = normalizedId;
+                return this.deviceId;
+            }
+        }
+        if (window.selectedDeviceId) {
+            const id = window.selectedDeviceId;
+            if (id) {
+                const normalizedId = id.toString().trim().toUpperCase();
+                this.deviceId = normalizedId;
+                return this.deviceId;
+            }
+        }
+        // 最后使用默认值（不应该到达这里，因为应该在open()之前设置设备ID）
+        this.deviceId = 'D01';
+        return this.deviceId;
+    },
     init() {
         ensureMq2OverlayTemplate();
         this.overlay = document.getElementById('overlayMQ2');
@@ -3674,11 +4476,46 @@ const MQ2Control = {
         this.overlay.addEventListener('click', (e) => {
             if (e.target === this.overlay) this.close();
         });
-        this.refresh();
+        // 注意：init()时不要调用refresh()，因为此时设备ID可能还没有设置
+        // refresh()会在open()时被调用，那时设备ID应该已经设置好了
+        // this.refresh();
         this.updateButtons();
     },
     open() {
         if (!this.overlay) return;
+        
+        // 重要：优先检查PowerControlModal.currentDeviceId，这是用户最新选择的设备ID
+        // 如果PowerControlModal有保存的设备ID，优先使用它（这是用户最新选择的）
+        let targetDeviceId = this.deviceId;
+        if (window.PowerControlModal && window.PowerControlModal.currentDeviceId) {
+            const powerControlDeviceId = window.PowerControlModal.currentDeviceId;
+            // 无论是否匹配，都使用PowerControlModal中的设备ID（这是用户最新选择的）
+            if (powerControlDeviceId !== this.deviceId) {
+                this.setDeviceId(powerControlDeviceId);
+                targetDeviceId = powerControlDeviceId;
+            } else {
+                targetDeviceId = powerControlDeviceId;
+            }
+        }
+        
+        // 如果还是没有设备ID，尝试从页面获取（作为后备方案）
+        if (!targetDeviceId) {
+            const deviceId = this.getDeviceId();
+            this.setDeviceId(deviceId);
+            targetDeviceId = deviceId;
+        }
+        
+        // 每次打开时都强制更新标题，确保显示正确的设备ID
+        if (targetDeviceId) {
+            const titleEl = document.getElementById('modalTitleMQ2');
+            if (titleEl) {
+                // 立即更新标题，不等待异步
+                titleEl.textContent = `🔥 ${targetDeviceId} 烟雾传感器控制`;
+            }
+            // 异步获取设备名称（可选，用于显示设备名称）
+            this.updateTitleWithDeviceName();
+        }
+        
         this.overlay.classList.add('show');
         this.overlay.setAttribute('aria-hidden', 'false');
         if (this.feedback) {
@@ -3720,7 +4557,8 @@ const MQ2Control = {
                 return Number.isFinite(num) ? num : null;
             };
             try {
-                const resp = await fetch('/api/mq2/state');
+                const deviceId = this.getDeviceId();
+                const resp = await fetch(`/api/mq2/state?device_id=${encodeURIComponent(deviceId)}`);
                 const data = await resp.json();
                 if (data?.success) {
                     this.state = (data.state || 'unknown').toLowerCase();
@@ -3868,10 +4706,11 @@ const MQ2Control = {
     async setMode(mode) {
         if (!mode || mode === this.currentMode) return;
         try {
+            const deviceId = this.getDeviceId();
             const resp = await fetch('/api/mq2/mode', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({mode})
+                body: JSON.stringify({mode, device_id: deviceId})
             });
             const data = await resp.json();
             if (data?.success) {
@@ -3908,10 +4747,11 @@ const MQ2Control = {
             targetBtn.dataset.loading = '1';
             targetBtn.textContent = '发送中...';
             this.showFeedback('', true);
+            const deviceId = this.getDeviceId();
             const resp = await fetch('/api/mq2/switch', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({action})
+                body: JSON.stringify({action, device_id: deviceId})
             });
             const res = await resp.json();
             if (res?.success) {
@@ -3952,23 +4792,1523 @@ const MQ2Control = {
     }
 };
 
-function initSharedControls() {
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            ensurePowerControlTemplate();
-            PowerControlModal.init();
-            MQ2Control.init();
+// ============ BMP180 Control ============
+function ensureBmp180OverlayTemplate() {
+    if (document.getElementById('overlayBMP180')) return;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
+    <div id="overlayBMP180" class="overlay" aria-hidden="true">
+        <div class="modal mq2-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitleBMP180">
+            <div class="modal-head mq2-modal-head">
+                <div class="mq2-title-with-info">
+                    <div class="mq2-title-text">
+                        <span class="mq2-title-icon">🌡️</span>
+                        <span id="modalTitleBMP180">气压传感器控制</span>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button id="closeOverlayBMP180" class="close-btn" title="关闭">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="mq2-body">
+                    <div class="mq2-section mq2-meta">
+                        <div>传感器：<strong>BMP180 气压传感器</strong></div>
+                        <div id="bmp180ModeLine" class="mq2-subtle">运行模式：读取中...</div>
+                        <div id="bmp180StateLine">当前状态：读取中...</div>
+                        <div id="bmp180PhaseLine" class="mq2-subtle">当前阶段：--</div>
+                        <div id="bmp180NextRunLine" class="mq2-subtle">距离切换：--</div>
+                        <div id="bmp180UpdatedLine" class="mq2-subtle">最近操作：--</div>
+                        <div id="bmp180ViaLine" class="mq2-subtle"></div>
+                    </div>
+                    <div class="mq2-section mq2-mode-selector">
+                        <div class="mq2-section-head" data-role="bmp180-mode-head">运行模式</div>
+                        <div class="mq2-mode-options">
+                            <button class="mq2-mode-btn" data-mode="eco">
+                                <span class="mode-icon">💤</span>
+                                <div class="mode-text">
+                                    <span class="mode-name">省电模式</span>
+                                    <span class="mode-desc">开机5分钟 · 休眠25分钟</span>
+                                </div>
+                            </button>
+                            <button class="mq2-mode-btn" data-mode="balance">
+                                <span class="mode-icon">⚖️</span>
+                                <div class="mode-text">
+                                    <span class="mode-name">平衡模式</span>
+                                    <span class="mode-desc">开机15分钟 · 休眠15分钟</span>
+                                </div>
+                            </button>
+                            <button class="mq2-mode-btn" data-mode="safe">
+                                <span class="mode-icon">🔥</span>
+                                <div class="mode-text">
+                                    <span class="mode-name">安全模式</span>
+                                    <span class="mode-desc">开机25分钟 · 休眠5分钟</span>
+                                </div>
+                            </button>
+                            <button class="mq2-mode-btn" data-mode="always">
+                                <span class="mode-icon">⚡</span>
+                                <div class="mode-text">
+                                    <span class="mode-name">不省电</span>
+                                    <span class="mode-desc">持续供电，快速响应</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mq2-section mq2-actions-card">
+                        <div class="mq2-section-head">远程指令</div>
+                        <div class="mq2-actions">
+                            <button id="btnBmp180On" class="btn" type="button">开启传感器</button>
+                            <button id="btnBmp180Off" class="btn" type="button">关闭传感器</button>
+                        </div>
+                        <div id="bmp180Feedback" class="mq2-feedback"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>`;
+    document.body.appendChild(wrapper.firstElementChild);
+}
+
+const BMP180Control = {
+    overlay: null,
+    deviceId: null,
+    state: 'unknown',
+    stateUpdatedAt: null,
+    lastVia: null,
+    currentMode: 'always',
+    phase: 'on',
+    phaseMessage: '',
+    phaseUntil: null,
+    countdown: null,
+    countdownRefreshAt: 0,
+    pendingTimer: null,
+    refreshPromise: null,
+    setDeviceId(deviceId) {
+        const normalizedId = deviceId ? deviceId.toString().trim().toUpperCase() : null;
+        this.deviceId = normalizedId;
+        if (this.overlay && this.deviceId) {
+            const titleEl = document.getElementById('modalTitleBMP180');
+            if (titleEl) {
+                // 只更新文本部分，不包含emoji（emoji已经在模板中）
+                titleEl.textContent = `${this.deviceId} 气压传感器控制`;
+            }
+        }
+    },
+    getDeviceId() {
+        if (this.deviceId) return this.deviceId;
+        if (window.getSelectedDeviceId) {
+            const id = window.getSelectedDeviceId();
+            if (id) {
+                this.deviceId = id.toString().trim().toUpperCase();
+                return this.deviceId;
+            }
+        }
+        this.deviceId = 'D01';
+        return this.deviceId;
+    },
+    init() {
+        ensureBmp180OverlayTemplate();
+        this.overlay = document.getElementById('overlayBMP180');
+        if (!this.overlay) return;
+        this.modeLine = document.getElementById('bmp180ModeLine');
+        this.stateLine = document.getElementById('bmp180StateLine');
+        this.phaseLine = document.getElementById('bmp180PhaseLine');
+        this.nextRunLine = document.getElementById('bmp180NextRunLine');
+        this.updatedLine = document.getElementById('bmp180UpdatedLine');
+        this.viaLine = document.getElementById('bmp180ViaLine');
+        this.feedback = document.getElementById('bmp180Feedback');
+        this.modeButtons = Array.from(document.querySelectorAll('#overlayBMP180 .mq2-mode-btn'));
+        this.modeButtons.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const hasAccess = await requireControlPassword('请输入密码以切换运行模式');
+                if (!hasAccess) return;
+                const mode = btn.dataset.mode;
+                if (mode) this.setMode(mode);
+            });
         });
-    } else {
+        this.modeHeader = this.overlay.querySelector('[data-role="bmp180-mode-head"]');
+        this.modeHeader?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以切换到开发模式');
+            if (!hasAccess) return;
+            this.setMode('dev');
+        });
+        this.btnOn = document.getElementById('btnBmp180On');
+        this.btnOff = document.getElementById('btnBmp180Off');
+        this.btnOn?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以开启传感器');
+            if (!hasAccess) return;
+            this.sendSwitch('on');
+        });
+        this.btnOff?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以关闭传感器');
+            if (!hasAccess) return;
+            this.sendSwitch('off');
+        });
+        const closeBtn = document.getElementById('closeOverlayBMP180');
+        closeBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.close();
+        });
+        this.overlay.addEventListener('click', (e) => {
+            if (e.target === this.overlay) {
+                e.stopPropagation();
+                this.close();
+            }
+        });
+        // 阻止modal内部的点击事件冒泡到overlay
+        const modal = this.overlay.querySelector('.modal');
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+        this.updateButtons();
+    },
+    open() {
+        if (!this.overlay) return;
+        let targetDeviceId = this.deviceId;
+        if (window.PowerControlModal && window.PowerControlModal.currentDeviceId) {
+            targetDeviceId = window.PowerControlModal.currentDeviceId;
+            this.setDeviceId(targetDeviceId);
+        }
+        if (!targetDeviceId) {
+            const deviceId = this.getDeviceId();
+            this.setDeviceId(deviceId);
+            targetDeviceId = deviceId;
+        }
+        if (targetDeviceId) {
+            const titleEl = document.getElementById('modalTitleBMP180');
+            if (titleEl) {
+                // 只更新文本部分，不包含emoji（emoji已经在模板中）
+                titleEl.textContent = `${targetDeviceId} 气压传感器控制`;
+            }
+        }
+        this.overlay.classList.add('show');
+        this.overlay.setAttribute('aria-hidden', 'false');
+        if (this.feedback) {
+            this.feedback.textContent = '';
+            this.feedback.style.maxHeight = '0';
+            this.feedback.style.opacity = '0';
+            this.feedback.style.marginTop = '0';
+        }
+        this.updateButtons();
+        this.refresh();
+        this.startCountdown();
+    },
+    close() {
+        if (!this.overlay) return;
+        this.overlay.classList.remove('show');
+        this.overlay.setAttribute('aria-hidden', 'true');
+        if (this.countdown) {
+            clearInterval(this.countdown);
+            this.countdown = null;
+        }
+        if (this.pendingTimer) {
+            clearTimeout(this.pendingTimer);
+            this.pendingTimer = null;
+        }
+    },
+    async refresh() {
+        if (!this.overlay) return;
+        if (this.refreshPromise) return this.refreshPromise;
+        const run = async () => {
+            if (this.stateLine) this.stateLine.textContent = '当前状态：读取中...';
+            if (this.modeLine) this.modeLine.textContent = '运行模式：读取中...';
+            if (this.phaseLine) this.phaseLine.textContent = '当前阶段：--';
+            if (this.nextRunLine) this.nextRunLine.textContent = '距离切换：--';
+            if (this.updatedLine) this.updatedLine.textContent = '最近操作：--';
+            if (this.viaLine) this.viaLine.textContent = '';
+            try {
+                const deviceId = this.getDeviceId();
+                const resp = await fetch(`/api/bmp180/state?device_id=${encodeURIComponent(deviceId)}`);
+                const data = await resp.json();
+                if (data?.success) {
+                    this.state = (data.state || 'unknown').toLowerCase();
+                    this.currentMode = data.mode || this.currentMode;
+                    this.phase = data.phase || 'unknown';
+                    this.phaseMessage = data.phase_message || '';
+                    // phase_until可能是时间戳（秒）或null
+                    this.phaseUntil = data.phase_until ? (typeof data.phase_until === 'string' ? parseFloat(data.phase_until) : data.phase_until) : null;
+                    this.stateUpdatedAt = data.updated_at || null;
+                    this.lastVia = data.last_via || null;
+                    if (this.modeLine) {
+                        this.modeLine.textContent = `运行模式：${data.mode_icon || ''} ${data.mode_name || '未知模式'}`;
+                    }
+                } else {
+                    this.resetState();
+                }
+            } catch (e) {
+                this.resetState();
+            }
+            this.updatePhaseLine();
+            this.updateModeButtons();
+            this.startCountdown();
+            this.renderState();
+            this.handlePendingPhase();
+            this.updateButtons();
+        };
+        this.refreshPromise = run();
+        try {
+            await this.refreshPromise;
+        } finally {
+            this.refreshPromise = null;
+        }
+    },
+    renderState() {
+        if (this.stateLine) {
+            let text = '当前状态：';
+            if (this.phase === 'manual') {
+                text += '已关闭（手动）';
+            } else if (this.state === 'on') {
+                text += '已开启（实时监测）';
+            } else if (this.state === 'off') {
+                text += '自动休眠中';
+            } else {
+                text += '未知';
+            }
+            this.stateLine.textContent = text;
+        }
+        if (this.updatedLine) {
+            if (this.stateUpdatedAt) {
+                // updated_at可能是时间戳（秒）或null
+                const timestamp = typeof this.stateUpdatedAt === 'string' ? parseFloat(this.stateUpdatedAt) : this.stateUpdatedAt;
+                if (timestamp && !isNaN(timestamp)) {
+                    const date = new Date(timestamp * 1000);
+                    this.updatedLine.textContent = `最近操作：${date.toLocaleString('zh-CN')}`;
+                } else {
+                    this.updatedLine.textContent = '最近操作：--';
+                }
+            } else {
+                this.updatedLine.textContent = '最近操作：--';
+            }
+        }
+        if (this.viaLine) {
+            if (this.lastVia) {
+                const source = this.lastVia === 'BLE' ? '蓝牙' : (this.lastVia === 'MQTT' ? 'MQTT' : this.lastVia);
+                this.viaLine.textContent = `指令来源：${source}`;
+            } else {
+                this.viaLine.textContent = '';
+            }
+        }
+    },
+    resetState() {
+        this.state = 'unknown';
+        this.currentMode = 'always';
+        this.phase = 'on';
+        this.phaseMessage = '';
+        this.phaseUntil = null;
+        if (this.modeLine) this.modeLine.textContent = '运行模式：读取中...';
+        if (this.phaseLine) this.phaseLine.textContent = '当前阶段：--';
+        if (this.nextRunLine) this.nextRunLine.textContent = '距离切换：--';
+        this.updateModeButtons();
+        this.updatePhaseLine();
+        this.stateUpdatedAt = null;
+        this.lastVia = null;
+        this.renderState();
+    },
+    handlePendingPhase() {
+        const isPending = this.phase === 'pending' || (this.phaseMessage && this.phaseMessage.includes('模式切换中'));
+        if (isPending) {
+            if (this.pendingTimer) clearTimeout(this.pendingTimer);
+            this.pendingTimer = setTimeout(() => {
+                this.pendingTimer = null;
+                this.refresh();
+            }, 1500);
+        } else if (this.pendingTimer) {
+            clearTimeout(this.pendingTimer);
+            this.pendingTimer = null;
+        }
+    },
+    updateModeButtons() {
+        this.modeButtons?.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === this.currentMode);
+        });
+    },
+    updatePhaseLine() {
+        if (!this.phaseLine) return;
+        const baseMsg = this.phaseMessage || (this.phase === 'off' ? '休眠中' : '供电中');
+        if (this.phase === 'manual') {
+            this.phaseLine.textContent = `当前阶段：${this.phaseMessage || '手动关闭'}`;
+        } else {
+            this.phaseLine.textContent = `当前阶段：${baseMsg}`;
+        }
+    },
+    startCountdown() {
+        if (!this.nextRunLine) return;
+        if (this.countdown) {
+            clearInterval(this.countdown);
+            this.countdown = null;
+        }
+        const updateLine = () => {
+            if (this.phase === 'manual') {
+                this.nextRunLine.textContent = '距离切换：--';
+                return;
+            }
+            if (!this.phaseUntil) {
+                this.nextRunLine.textContent = '距离切换：--';
+                return;
+            }
+            const remaining = Math.max(0, Math.floor(this.phaseUntil - Date.now() / 1000));
+            if (remaining <= 0) {
+                this.nextRunLine.textContent = '距离切换：即将切换';
+                const now = Date.now();
+                if (!this.countdownRefreshAt || now - this.countdownRefreshAt > 5000) {
+                    this.countdownRefreshAt = now;
+                    this.refresh();
+                }
+            } else {
+                this.nextRunLine.textContent = `距离切换：${this.formatDuration(remaining)}`;
+            }
+        };
+        updateLine();
+        if (this.phase === 'manual') return;
+        this.countdown = setInterval(updateLine, 1000);
+    },
+    formatDuration(totalSeconds) {
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (minutes > 0) {
+            return `${minutes}分${seconds}秒`;
+        }
+        return `${seconds}秒`;
+    },
+    async setMode(mode) {
+        if (!mode || mode === this.currentMode) return;
+        try {
+            const deviceId = this.getDeviceId();
+            const resp = await fetch('/api/bmp180/mode', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({mode, device_id: deviceId})
+            });
+            const data = await resp.json();
+            if (data?.success) {
+                this.currentMode = mode;
+                this.updateModeButtons();
+                const msg = `已切换为：${data.mode_icon || ''} ${data.mode_name || ''}`.trim();
+                this.showFeedback(msg);
+                showNotification(`✅ ${msg}`);
+                await this.refresh();
+            } else {
+                this.showFeedback(`切换失败：${data?.error || '未知错误'}`);
+            }
+        } catch (e) {
+            this.showFeedback('切换失败，请检查连接');
+        }
+    },
+    updateButtons() {
+        const knowsState = this.state === 'on' || this.state === 'off';
+        if (this.btnOn && this.btnOn.dataset.loading !== '1') this.btnOn.disabled = false;
+        if (this.btnOff && this.btnOff.dataset.loading !== '1') this.btnOff.disabled = false;
+        this.btnOn?.classList.toggle('active', this.state === 'on');
+        this.btnOff?.classList.toggle('active', this.state === 'off');
+        if (!knowsState) {
+            this.btnOn?.classList.remove('active');
+            this.btnOff?.classList.remove('active');
+        }
+    },
+    async sendSwitch(action) {
+        const targetBtn = action === 'on' ? this.btnOn : this.btnOff;
+        if (!targetBtn) return;
+        const originalText = targetBtn.textContent;
+        try {
+            targetBtn.disabled = true;
+            targetBtn.dataset.loading = '1';
+            targetBtn.textContent = '发送中...';
+            this.showFeedback('', true);
+            const deviceId = this.getDeviceId();
+            const resp = await fetch('/api/bmp180/switch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action, device_id: deviceId})
+            });
+            const res = await resp.json();
+            if (res?.success) {
+                this.state = (res.state || (action === 'off' ? 'off' : 'on')).toLowerCase();
+                this.stateUpdatedAt = res.updated_at || null;
+                this.lastVia = res.last_via || null;
+                const via = res.via === 'BLE' ? '蓝牙' : res.via === 'MQTT' ? 'MQTT' : '接口';
+                const msg = `已通过${via}发送${action === 'off' ? '关闭' : '开启'}指令`;
+                this.showFeedback(msg);
+                showNotification(`✅ ${msg}`);
+            } else {
+                this.showFeedback(`发送失败：${res?.error || '未知错误'}`);
+            }
+        } catch (e) {
+            this.showFeedback('发送失败，请检查连接');
+        } finally {
+            targetBtn.textContent = originalText;
+            targetBtn.dataset.loading = '0';
+            targetBtn.disabled = false;
+            await this.refresh();
+        }
+    },
+    showFeedback(message, isReset = false) {
+        if (!this.feedback) return;
+        if (isReset || !message) {
+            this.feedback.textContent = '';
+            this.feedback.style.maxHeight = '0';
+            this.feedback.style.opacity = '0';
+            this.feedback.style.marginTop = '0';
+            return;
+        }
+        this.feedback.textContent = message;
+        const words = message.trim().split(/\s+/);
+        const strength = Math.min(words.length * 4, 28);
+        this.feedback.style.maxHeight = `${32 + strength}px`;
+        this.feedback.style.opacity = '1';
+        this.feedback.style.marginTop = '6px';
+    }
+};
+
+// 由于代码长度限制，BH1750Control将使用类似的实现，但API路径不同
+// 为了节省空间，我将创建一个简化的版本
+const BH1750Control = JSON.parse(JSON.stringify(BMP180Control));
+BH1750Control.overlay = null;
+BH1750Control.deviceId = null;
+BH1750Control.currentMode = 'always';
+// 重写需要修改的方法
+Object.assign(BH1750Control, {
+    init() {
+        // 需要创建BH1750的模板
+        if (!document.getElementById('overlayBH1750')) {
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = `
+            <div id="overlayBH1750" class="overlay" aria-hidden="true">
+                <div class="modal mq2-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitleBH1750">
+                    <div class="modal-head mq2-modal-head">
+                        <div class="mq2-title-with-info">
+                            <div class="mq2-title-text">
+                                <span class="mq2-title-icon">💡</span>
+                                <span id="modalTitleBH1750">亮度传感器控制</span>
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <button id="closeOverlayBH1750" class="close-btn" title="关闭">✕</button>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mq2-body">
+                            <div class="mq2-section mq2-meta">
+                                <div>传感器：<strong>BH1750 亮度传感器</strong></div>
+                                <div id="bh1750ModeLine" class="mq2-subtle">运行模式：读取中...</div>
+                                <div id="bh1750StateLine">当前状态：读取中...</div>
+                                <div id="bh1750PhaseLine" class="mq2-subtle">当前阶段：--</div>
+                                <div id="bh1750NextRunLine" class="mq2-subtle">距离切换：--</div>
+                                <div id="bh1750UpdatedLine" class="mq2-subtle">最近操作：--</div>
+                                <div id="bh1750ViaLine" class="mq2-subtle"></div>
+                            </div>
+                            <div class="mq2-section mq2-mode-selector">
+                                <div class="mq2-section-head" data-role="bh1750-mode-head">运行模式</div>
+                                <div class="mq2-mode-options">
+                                    <button class="mq2-mode-btn" data-mode="eco">
+                                        <span class="mode-icon">💤</span>
+                                        <div class="mode-text">
+                                            <span class="mode-name">省电模式</span>
+                                            <span class="mode-desc">开机5分钟 · 休眠25分钟</span>
+                                        </div>
+                                    </button>
+                                    <button class="mq2-mode-btn" data-mode="balance">
+                                        <span class="mode-icon">⚖️</span>
+                                        <div class="mode-text">
+                                            <span class="mode-name">平衡模式</span>
+                                            <span class="mode-desc">开机15分钟 · 休眠15分钟</span>
+                                        </div>
+                                    </button>
+                                    <button class="mq2-mode-btn" data-mode="safe">
+                                        <span class="mode-icon">🔥</span>
+                                        <div class="mode-text">
+                                            <span class="mode-name">安全模式</span>
+                                            <span class="mode-desc">开机25分钟 · 休眠5分钟</span>
+                                        </div>
+                                    </button>
+                                    <button class="mq2-mode-btn" data-mode="always">
+                                        <span class="mode-icon">⚡</span>
+                                        <div class="mode-text">
+                                            <span class="mode-name">不省电</span>
+                                            <span class="mode-desc">持续供电，快速响应</span>
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="mq2-section mq2-actions-card">
+                                <div class="mq2-section-head">远程指令</div>
+                                <div class="mq2-actions">
+                                    <button id="btnBh1750On" class="btn" type="button">开启传感器</button>
+                                    <button id="btnBh1750Off" class="btn" type="button">关闭传感器</button>
+                                </div>
+                                <div id="bh1750Feedback" class="mq2-feedback"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(wrapper.firstElementChild);
+        }
+        this.overlay = document.getElementById('overlayBH1750');
+        if (!this.overlay) return;
+        this.modeLine = document.getElementById('bh1750ModeLine');
+        this.stateLine = document.getElementById('bh1750StateLine');
+        this.phaseLine = document.getElementById('bh1750PhaseLine');
+        this.nextRunLine = document.getElementById('bh1750NextRunLine');
+        this.updatedLine = document.getElementById('bh1750UpdatedLine');
+        this.viaLine = document.getElementById('bh1750ViaLine');
+        this.feedback = document.getElementById('bh1750Feedback');
+        this.modeButtons = Array.from(document.querySelectorAll('#overlayBH1750 .mq2-mode-btn'));
+        this.modeButtons.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const hasAccess = await requireControlPassword('请输入密码以切换运行模式');
+                if (!hasAccess) return;
+                const mode = btn.dataset.mode;
+                if (mode) this.setMode(mode);
+            });
+        });
+        this.modeHeader = this.overlay.querySelector('[data-role="bh1750-mode-head"]');
+        this.modeHeader?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以切换到开发模式');
+            if (!hasAccess) return;
+            this.setMode('dev');
+        });
+        this.btnOn = document.getElementById('btnBh1750On');
+        this.btnOff = document.getElementById('btnBh1750Off');
+        this.btnOn?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以开启传感器');
+            if (!hasAccess) return;
+            this.sendSwitch('on');
+        });
+        this.btnOff?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以关闭传感器');
+            if (!hasAccess) return;
+            this.sendSwitch('off');
+        });
+        const closeBtn = document.getElementById('closeOverlayBH1750');
+        closeBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.close();
+        });
+        this.overlay.addEventListener('click', (e) => {
+            if (e.target === this.overlay) {
+                e.stopPropagation();
+                this.close();
+            }
+        });
+        // 阻止modal内部的点击事件冒泡到overlay
+        const modal = this.overlay.querySelector('.modal');
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+        this.updateButtons();
+    },
+    setDeviceId(deviceId) {
+        const normalizedId = deviceId ? deviceId.toString().trim().toUpperCase() : null;
+        this.deviceId = normalizedId;
+        if (this.overlay && this.deviceId) {
+            const titleEl = document.getElementById('modalTitleBH1750');
+            if (titleEl) {
+                // 只更新文本部分，不包含emoji（emoji已经在模板中）
+                titleEl.textContent = `${this.deviceId} 亮度传感器控制`;
+            }
+        }
+    },
+    getDeviceId() {
+        if (this.deviceId) return this.deviceId;
+        if (window.getSelectedDeviceId) {
+            const id = window.getSelectedDeviceId();
+            if (id) {
+                this.deviceId = id.toString().trim().toUpperCase();
+                return this.deviceId;
+            }
+        }
+        this.deviceId = 'D01';
+        return this.deviceId;
+    },
+    open() {
+        if (!this.overlay) return;
+        let targetDeviceId = this.deviceId;
+        if (window.PowerControlModal && window.PowerControlModal.currentDeviceId) {
+            targetDeviceId = window.PowerControlModal.currentDeviceId;
+            this.setDeviceId(targetDeviceId);
+        }
+        if (!targetDeviceId) {
+            const deviceId = this.getDeviceId();
+            this.setDeviceId(deviceId);
+            targetDeviceId = deviceId;
+        }
+        if (targetDeviceId) {
+            const titleEl = document.getElementById('modalTitleBH1750');
+            if (titleEl) {
+                // 只更新文本部分，不包含emoji（emoji已经在模板中）
+                titleEl.textContent = `${targetDeviceId} 亮度传感器控制`;
+            }
+        }
+        this.overlay.classList.add('show');
+        this.overlay.setAttribute('aria-hidden', 'false');
+        if (this.feedback) {
+            this.feedback.textContent = '';
+            this.feedback.style.maxHeight = '0';
+            this.feedback.style.opacity = '0';
+            this.feedback.style.marginTop = '0';
+        }
+        this.updateButtons();
+        this.refresh();
+        this.startCountdown();
+    },
+    close() {
+        if (!this.overlay) return;
+        this.overlay.classList.remove('show');
+        this.overlay.setAttribute('aria-hidden', 'true');
+        if (this.countdown) {
+            clearInterval(this.countdown);
+            this.countdown = null;
+        }
+        if (this.pendingTimer) {
+            clearTimeout(this.pendingTimer);
+            this.pendingTimer = null;
+        }
+    },
+    async refresh() {
+        if (!this.overlay) return;
+        if (this.refreshPromise) return this.refreshPromise;
+        const run = async () => {
+            if (this.stateLine) this.stateLine.textContent = '当前状态：读取中...';
+            if (this.modeLine) this.modeLine.textContent = '运行模式：读取中...';
+            if (this.phaseLine) this.phaseLine.textContent = '当前阶段：--';
+            if (this.nextRunLine) this.nextRunLine.textContent = '距离切换：--';
+            if (this.updatedLine) this.updatedLine.textContent = '最近操作：--';
+            if (this.viaLine) this.viaLine.textContent = '';
+            try {
+                const deviceId = this.getDeviceId();
+                const resp = await fetch(`/api/bh1750/state?device_id=${encodeURIComponent(deviceId)}`);
+                const data = await resp.json();
+                if (data?.success) {
+                    this.state = (data.state || 'unknown').toLowerCase();
+                    this.currentMode = data.mode || this.currentMode;
+                    this.phase = data.phase || 'unknown';
+                    this.phaseMessage = data.phase_message || '';
+                    // phase_until可能是时间戳（秒）或null
+                    this.phaseUntil = data.phase_until ? (typeof data.phase_until === 'string' ? parseFloat(data.phase_until) : data.phase_until) : null;
+                    this.stateUpdatedAt = data.updated_at || null;
+                    this.lastVia = data.last_via || null;
+                    if (this.modeLine) {
+                        this.modeLine.textContent = `运行模式：${data.mode_icon || ''} ${data.mode_name || '未知模式'}`;
+                    }
+                } else {
+                    this.resetState();
+                }
+            } catch (e) {
+                this.resetState();
+            }
+            this.updatePhaseLine();
+            this.updateModeButtons();
+            this.startCountdown();
+            this.renderState();
+            this.handlePendingPhase();
+            this.updateButtons();
+        };
+        this.refreshPromise = run();
+        try {
+            await this.refreshPromise;
+        } finally {
+            this.refreshPromise = null;
+        }
+    },
+    async setMode(mode) {
+        if (!mode || mode === this.currentMode) return;
+        try {
+            const deviceId = this.getDeviceId();
+            const resp = await fetch('/api/bh1750/mode', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({mode, device_id: deviceId})
+            });
+            const data = await resp.json();
+            if (data?.success) {
+                this.currentMode = mode;
+                this.updateModeButtons();
+                const msg = `已切换为：${data.mode_icon || ''} ${data.mode_name || ''}`.trim();
+                this.showFeedback(msg);
+                showNotification(`✅ ${msg}`);
+                await this.refresh();
+            } else {
+                this.showFeedback(`切换失败：${data?.error || '未知错误'}`);
+            }
+        } catch (e) {
+            this.showFeedback('切换失败，请检查连接');
+        }
+    },
+    async sendSwitch(action) {
+        const targetBtn = action === 'on' ? this.btnOn : this.btnOff;
+        if (!targetBtn) return;
+        const originalText = targetBtn.textContent;
+        try {
+            targetBtn.disabled = true;
+            targetBtn.dataset.loading = '1';
+            targetBtn.textContent = '发送中...';
+            this.showFeedback('', true);
+            const deviceId = this.getDeviceId();
+            const resp = await fetch('/api/bh1750/switch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action, device_id: deviceId})
+            });
+            const res = await resp.json();
+            if (res?.success) {
+                this.state = (res.state || (action === 'off' ? 'off' : 'on')).toLowerCase();
+                this.stateUpdatedAt = res.updated_at || null;
+                this.lastVia = res.last_via || null;
+                const via = res.via === 'BLE' ? '蓝牙' : res.via === 'MQTT' ? 'MQTT' : '接口';
+                const msg = `已通过${via}发送${action === 'off' ? '关闭' : '开启'}指令`;
+                this.showFeedback(msg);
+                showNotification(`✅ ${msg}`);
+            } else {
+                this.showFeedback(`发送失败：${res?.error || '未知错误'}`);
+            }
+        } catch (e) {
+            this.showFeedback('发送失败，请检查连接');
+        } finally {
+            targetBtn.textContent = originalText;
+            targetBtn.dataset.loading = '0';
+            targetBtn.disabled = false;
+            await this.refresh();
+        }
+    },
+    renderState() {
+        if (this.stateLine) {
+            let text = '当前状态：';
+            if (this.phase === 'manual') {
+                text += '已关闭（手动）';
+            } else if (this.state === 'on') {
+                text += '已开启（实时监测）';
+            } else if (this.state === 'off') {
+                text += '自动休眠中';
+            } else {
+                text += '未知';
+            }
+            this.stateLine.textContent = text;
+        }
+        if (this.updatedLine) {
+            if (this.stateUpdatedAt) {
+                // updated_at可能是时间戳（秒）或null
+                const timestamp = typeof this.stateUpdatedAt === 'string' ? parseFloat(this.stateUpdatedAt) : this.stateUpdatedAt;
+                if (timestamp && !isNaN(timestamp)) {
+                    const date = new Date(timestamp * 1000);
+                    this.updatedLine.textContent = `最近操作：${date.toLocaleString('zh-CN')}`;
+                } else {
+                    this.updatedLine.textContent = '最近操作：--';
+                }
+            } else {
+                this.updatedLine.textContent = '最近操作：--';
+            }
+        }
+        if (this.viaLine) {
+            if (this.lastVia) {
+                const source = this.lastVia === 'BLE' ? '蓝牙' : (this.lastVia === 'MQTT' ? 'MQTT' : this.lastVia);
+                this.viaLine.textContent = `指令来源：${source}`;
+            } else {
+                this.viaLine.textContent = '';
+            }
+        }
+    },
+    resetState() {
+        this.state = 'unknown';
+        this.currentMode = 'always';
+        this.phase = 'on';
+        this.phaseMessage = '';
+        this.phaseUntil = null;
+        if (this.modeLine) this.modeLine.textContent = '运行模式：读取中...';
+        if (this.phaseLine) this.phaseLine.textContent = '当前阶段：--';
+        if (this.nextRunLine) this.nextRunLine.textContent = '距离切换：--';
+        this.updateModeButtons();
+        this.updatePhaseLine();
+        this.stateUpdatedAt = null;
+        this.lastVia = null;
+        this.renderState();
+    },
+    handlePendingPhase() {
+        const isPending = this.phase === 'pending' || (this.phaseMessage && this.phaseMessage.includes('模式切换中'));
+        if (isPending) {
+            if (this.pendingTimer) clearTimeout(this.pendingTimer);
+            this.pendingTimer = setTimeout(() => {
+                this.pendingTimer = null;
+                this.refresh();
+            }, 1500);
+        } else if (this.pendingTimer) {
+            clearTimeout(this.pendingTimer);
+            this.pendingTimer = null;
+        }
+    },
+    updateModeButtons() {
+        this.modeButtons?.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === this.currentMode);
+        });
+    },
+    updatePhaseLine() {
+        if (!this.phaseLine) return;
+        const baseMsg = this.phaseMessage || (this.phase === 'off' ? '休眠中' : '供电中');
+        if (this.phase === 'manual') {
+            this.phaseLine.textContent = `当前阶段：${this.phaseMessage || '手动关闭'}`;
+        } else {
+            this.phaseLine.textContent = `当前阶段：${baseMsg}`;
+        }
+    },
+    startCountdown() {
+        if (!this.nextRunLine) return;
+        if (this.countdown) {
+            clearInterval(this.countdown);
+            this.countdown = null;
+        }
+        const updateLine = () => {
+            if (this.phase === 'manual') {
+                this.nextRunLine.textContent = '距离切换：--';
+                return;
+            }
+            if (!this.phaseUntil) {
+                this.nextRunLine.textContent = '距离切换：--';
+                return;
+            }
+            const remaining = Math.max(0, Math.floor(this.phaseUntil - Date.now() / 1000));
+            if (remaining <= 0) {
+                this.nextRunLine.textContent = '距离切换：即将切换';
+                const now = Date.now();
+                if (!this.countdownRefreshAt || now - this.countdownRefreshAt > 5000) {
+                    this.countdownRefreshAt = now;
+                    this.refresh();
+                }
+            } else {
+                this.nextRunLine.textContent = `距离切换：${this.formatDuration(remaining)}`;
+            }
+        };
+        updateLine();
+        if (this.phase === 'manual') return;
+        this.countdown = setInterval(updateLine, 1000);
+    },
+    formatDuration(totalSeconds) {
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (minutes > 0) {
+            return `${minutes}分${seconds}秒`;
+        }
+        return `${seconds}秒`;
+    },
+    async setMode(mode) {
+        if (!mode || mode === this.currentMode) return;
+        try {
+            const deviceId = this.getDeviceId();
+            const resp = await fetch('/api/bh1750/mode', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({mode, device_id: deviceId})
+            });
+            const data = await resp.json();
+            if (data?.success) {
+                this.currentMode = mode;
+                this.updateModeButtons();
+                const msg = `已切换为：${data.mode_icon || ''} ${data.mode_name || ''}`.trim();
+                this.showFeedback(msg);
+                showNotification(`✅ ${msg}`);
+                await this.refresh();
+            } else {
+                this.showFeedback(`切换失败：${data?.error || '未知错误'}`);
+            }
+        } catch (e) {
+            this.showFeedback('切换失败，请检查连接');
+        }
+    },
+    updateButtons() {
+        const knowsState = this.state === 'on' || this.state === 'off';
+        if (this.btnOn && this.btnOn.dataset.loading !== '1') this.btnOn.disabled = false;
+        if (this.btnOff && this.btnOff.dataset.loading !== '1') this.btnOff.disabled = false;
+        this.btnOn?.classList.toggle('active', this.state === 'on');
+        this.btnOff?.classList.toggle('active', this.state === 'off');
+        if (!knowsState) {
+            this.btnOn?.classList.remove('active');
+            this.btnOff?.classList.remove('active');
+        }
+    },
+    showFeedback(message, isReset = false) {
+        if (!this.feedback) return;
+        if (isReset || !message) {
+            this.feedback.textContent = '';
+            this.feedback.style.maxHeight = '0';
+            this.feedback.style.opacity = '0';
+            this.feedback.style.marginTop = '0';
+            return;
+        }
+        this.feedback.textContent = message;
+        const words = message.trim().split(/\s+/);
+        const strength = Math.min(words.length * 4, 28);
+        this.feedback.style.maxHeight = `${32 + strength}px`;
+        this.feedback.style.opacity = '1';
+        this.feedback.style.marginTop = '6px';
+    }
+});
+
+// 导出全局函数
+window.openOverlayBMP180 = () => {
+    if (window.BMP180Control) {
+        // 确保已经初始化
+        if (!window.BMP180Control.overlay) {
+            window.BMP180Control.init();
+        }
+        window.BMP180Control.open();
+    }
+};
+
+window.openOverlayBH1750 = () => {
+    if (window.BH1750Control) {
+        // 确保已经初始化
+        if (!window.BH1750Control.overlay) {
+            window.BH1750Control.init();
+        }
+        window.BH1750Control.open();
+    }
+};
+
+// ============ BLE Control ============
+const BLEControl = {
+    overlay: null,
+    deviceId: null,
+    state: 'unknown',
+    stateUpdatedAt: null,
+    lastVia: null,
+    setDeviceId(deviceId) {
+        const normalizedId = deviceId ? deviceId.toString().trim().toUpperCase() : null;
+        this.deviceId = normalizedId;
+        if (this.overlay && this.deviceId) {
+            const titleEl = document.getElementById('modalTitleBLE');
+            if (titleEl) {
+                // 只更新文本部分，不包含emoji（emoji已经在模板中）
+                titleEl.textContent = `${this.deviceId} 蓝牙控制`;
+            }
+        }
+    },
+    getDeviceId() {
+        if (this.deviceId) return this.deviceId;
+        if (window.getSelectedDeviceId) {
+            const id = window.getSelectedDeviceId();
+            if (id) {
+                this.deviceId = id.toString().trim().toUpperCase();
+                return this.deviceId;
+            }
+        }
+        this.deviceId = 'D01';
+        return this.deviceId;
+    },
+    init() {
+        if (!document.getElementById('overlayBLE')) {
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = `
+            <div id="overlayBLE" class="overlay" aria-hidden="true">
+                <div class="modal mq2-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitleBLE">
+                    <div class="modal-head mq2-modal-head">
+                        <div class="mq2-title-with-info">
+                            <div class="mq2-title-text">
+                                <span class="mq2-title-icon">📶</span>
+                                <span id="modalTitleBLE">蓝牙控制</span>
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <button id="closeOverlayBLE" class="close-btn" title="关闭">✕</button>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mq2-body">
+                            <div class="mq2-section mq2-meta">
+                                <div>设备：<strong>BLE 蓝牙</strong></div>
+                                <div id="bleStateLine">当前状态：读取中...</div>
+                                <div id="bleUpdatedLine" class="mq2-subtle">最近操作：--</div>
+                                <div id="bleViaLine" class="mq2-subtle"></div>
+                            </div>
+                            <div class="mq2-section mq2-actions-card">
+                                <div class="mq2-section-head">远程指令</div>
+                                <div class="mq2-actions">
+                                    <button id="btnBleOn" class="btn" type="button">开启蓝牙</button>
+                                    <button id="btnBleOff" class="btn" type="button">关闭蓝牙</button>
+                                </div>
+                                <div id="bleFeedback" class="mq2-feedback"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(wrapper.firstElementChild);
+        }
+        this.overlay = document.getElementById('overlayBLE');
+        if (!this.overlay) return;
+        this.stateLine = document.getElementById('bleStateLine');
+        this.updatedLine = document.getElementById('bleUpdatedLine');
+        this.viaLine = document.getElementById('bleViaLine');
+        this.feedback = document.getElementById('bleFeedback');
+        this.btnOn = document.getElementById('btnBleOn');
+        this.btnOff = document.getElementById('btnBleOff');
+        this.btnOn?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以开启蓝牙');
+            if (!hasAccess) return;
+            this.sendSwitch('on');
+        });
+        this.btnOff?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以关闭蓝牙');
+            if (!hasAccess) return;
+            this.sendSwitch('off');
+        });
+        const closeBtn = document.getElementById('closeOverlayBLE');
+        closeBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.close();
+        });
+        this.overlay.addEventListener('click', (e) => {
+            if (e.target === this.overlay) {
+                e.stopPropagation();
+                this.close();
+            }
+        });
+        // 阻止modal内部的点击事件冒泡到overlay
+        const modal = this.overlay.querySelector('.modal');
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+        this.updateButtons();
+    },
+    open() {
+        if (!this.overlay) return;
+        let targetDeviceId = this.deviceId;
+        if (window.PowerControlModal && window.PowerControlModal.currentDeviceId) {
+            targetDeviceId = window.PowerControlModal.currentDeviceId;
+            this.setDeviceId(targetDeviceId);
+        }
+        if (!targetDeviceId) {
+            const deviceId = this.getDeviceId();
+            this.setDeviceId(deviceId);
+            targetDeviceId = deviceId;
+        }
+        if (targetDeviceId) {
+            const titleEl = document.getElementById('modalTitleBLE');
+            if (titleEl) {
+                // 只更新文本部分，不包含emoji（emoji已经在模板中）
+                titleEl.textContent = `${targetDeviceId} 蓝牙控制`;
+            }
+        }
+        this.overlay.classList.add('show');
+        this.overlay.setAttribute('aria-hidden', 'false');
+        if (this.feedback) {
+            this.feedback.textContent = '';
+            this.feedback.style.maxHeight = '0';
+            this.feedback.style.opacity = '0';
+            this.feedback.style.marginTop = '0';
+        }
+        this.updateButtons();
+        this.refresh();
+    },
+    close() {
+        if (!this.overlay) return;
+        this.overlay.classList.remove('show');
+        this.overlay.setAttribute('aria-hidden', 'true');
+    },
+    async refresh() {
+        if (!this.overlay) return;
+        if (this.stateLine) this.stateLine.textContent = '当前状态：读取中...';
+        if (this.updatedLine) this.updatedLine.textContent = '最近操作：--';
+        if (this.viaLine) this.viaLine.textContent = '';
+        try {
+            const deviceId = this.getDeviceId();
+            const resp = await fetch(`/api/ble/state?device_id=${encodeURIComponent(deviceId)}`);
+            const data = await resp.json();
+            if (data?.success) {
+                this.state = (data.state || 'unknown').toLowerCase();
+                this.stateUpdatedAt = data.updated_at || null;
+                this.lastVia = data.last_via || null;
+                if (this.stateLine) {
+                    this.stateLine.textContent = `当前状态：${this.state === 'on' ? '已开启' : this.state === 'off' ? '已关闭' : '未知'}`;
+                }
+                if (this.updatedLine && this.stateUpdatedAt) {
+                    // updated_at可能是时间戳（秒）或null
+                    const timestamp = typeof this.stateUpdatedAt === 'string' ? parseFloat(this.stateUpdatedAt) : this.stateUpdatedAt;
+                    if (timestamp && !isNaN(timestamp)) {
+                        const date = new Date(timestamp * 1000);
+                        this.updatedLine.textContent = `最近操作：${date.toLocaleString('zh-CN')}`;
+                    } else {
+                        this.updatedLine.textContent = '最近操作：--';
+                    }
+                }
+                if (this.viaLine && this.lastVia) {
+                    const source = this.lastVia === 'BLE' ? '蓝牙' : (this.lastVia === 'MQTT' ? 'MQTT' : this.lastVia);
+                    this.viaLine.textContent = `指令来源：${source}`;
+                }
+            }
+        } catch (e) {
+            console.error('刷新BLE状态失败：', e);
+        }
+        this.updateButtons();
+    },
+    updateButtons() {
+        const knowsState = this.state === 'on' || this.state === 'off';
+        if (this.btnOn && this.btnOn.dataset.loading !== '1') this.btnOn.disabled = false;
+        if (this.btnOff && this.btnOff.dataset.loading !== '1') this.btnOff.disabled = false;
+        this.btnOn?.classList.toggle('active', this.state === 'on');
+        this.btnOff?.classList.toggle('active', this.state === 'off');
+        if (!knowsState) {
+            this.btnOn?.classList.remove('active');
+            this.btnOff?.classList.remove('active');
+        }
+    },
+    async sendSwitch(action) {
+        const targetBtn = action === 'on' ? this.btnOn : this.btnOff;
+        if (!targetBtn) return;
+        const originalText = targetBtn.textContent;
+        try {
+            targetBtn.disabled = true;
+            targetBtn.dataset.loading = '1';
+            targetBtn.textContent = '发送中...';
+            this.showFeedback('', true);
+            const deviceId = this.getDeviceId();
+            const resp = await fetch('/api/ble/switch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action, device_id: deviceId})
+            });
+            const res = await resp.json();
+            if (res?.success) {
+                this.state = (res.state || (action === 'off' ? 'off' : 'on')).toLowerCase();
+                this.stateUpdatedAt = res.updated_at || null;
+                this.lastVia = res.last_via || null;
+                const via = res.via === 'BLE' ? '蓝牙' : res.via === 'MQTT' ? 'MQTT' : '接口';
+                const msg = `已通过${via}发送${action === 'off' ? '关闭' : '开启'}指令`;
+                this.showFeedback(msg);
+                showNotification(`✅ ${msg}`);
+            } else {
+                this.showFeedback(`发送失败：${res?.error || '未知错误'}`);
+            }
+        } catch (e) {
+            this.showFeedback('发送失败，请检查连接');
+        } finally {
+            targetBtn.textContent = originalText;
+            targetBtn.dataset.loading = '0';
+            targetBtn.disabled = false;
+            await this.refresh();
+        }
+    },
+    showFeedback(message, isReset = false) {
+        if (!this.feedback) return;
+        if (isReset || !message) {
+            this.feedback.textContent = '';
+            this.feedback.style.maxHeight = '0';
+            this.feedback.style.opacity = '0';
+            this.feedback.style.marginTop = '0';
+            return;
+        }
+        this.feedback.textContent = message;
+        const words = message.trim().split(/\s+/);
+        const strength = Math.min(words.length * 4, 28);
+        this.feedback.style.maxHeight = `${32 + strength}px`;
+        this.feedback.style.opacity = '1';
+        this.feedback.style.marginTop = '6px';
+    }
+};
+
+// ============ OLED Control ============
+const OLEDControl = JSON.parse(JSON.stringify(BLEControl));
+OLEDControl.overlay = null;
+OLEDControl.deviceId = null;
+Object.assign(OLEDControl, {
+    setDeviceId(deviceId) {
+        const normalizedId = deviceId ? deviceId.toString().trim().toUpperCase() : null;
+        this.deviceId = normalizedId;
+        if (this.overlay && this.deviceId) {
+            const titleEl = document.getElementById('modalTitleOLED');
+            if (titleEl) {
+                // 只更新文本部分，不包含emoji（emoji已经在模板中）
+                titleEl.textContent = `${this.deviceId} OLED显示屏控制`;
+            }
+        }
+    },
+    getDeviceId() {
+        if (this.deviceId) return this.deviceId;
+        if (window.getSelectedDeviceId) {
+            const id = window.getSelectedDeviceId();
+            if (id) {
+                this.deviceId = id.toString().trim().toUpperCase();
+                return this.deviceId;
+            }
+        }
+        this.deviceId = 'D01';
+        return this.deviceId;
+    },
+    init() {
+        if (!document.getElementById('overlayOLED')) {
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = `
+            <div id="overlayOLED" class="overlay" aria-hidden="true">
+                <div class="modal mq2-modal" role="dialog" aria-modal="true" aria-labelledby="modalTitleOLED">
+                    <div class="modal-head mq2-modal-head">
+                        <div class="mq2-title-with-info">
+                            <div class="mq2-title-text">
+                                <span class="mq2-title-icon">📺</span>
+                                <span id="modalTitleOLED">OLED显示屏控制</span>
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <button id="closeOverlayOLED" class="close-btn" title="关闭">✕</button>
+                        </div>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mq2-body">
+                            <div class="mq2-section mq2-meta">
+                                <div>设备：<strong>OLED 显示屏</strong></div>
+                                <div id="oledStateLine">当前状态：读取中...</div>
+                                <div id="oledUpdatedLine" class="mq2-subtle">最近操作：--</div>
+                                <div id="oledViaLine" class="mq2-subtle"></div>
+                            </div>
+                            <div class="mq2-section mq2-actions-card">
+                                <div class="mq2-section-head">远程指令</div>
+                                <div class="mq2-actions">
+                                    <button id="btnOledOn" class="btn" type="button">开启显示屏</button>
+                                    <button id="btnOledOff" class="btn" type="button">关闭显示屏</button>
+                                </div>
+                                <div id="oledFeedback" class="mq2-feedback"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(wrapper.firstElementChild);
+        }
+        this.overlay = document.getElementById('overlayOLED');
+        if (!this.overlay) return;
+        this.stateLine = document.getElementById('oledStateLine');
+        this.updatedLine = document.getElementById('oledUpdatedLine');
+        this.viaLine = document.getElementById('oledViaLine');
+        this.feedback = document.getElementById('oledFeedback');
+        this.btnOn = document.getElementById('btnOledOn');
+        this.btnOff = document.getElementById('btnOledOff');
+        this.btnOn?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以开启显示屏');
+            if (!hasAccess) return;
+            this.sendSwitch('on');
+        });
+        this.btnOff?.addEventListener('click', async () => {
+            const hasAccess = await requireControlPassword('请输入密码以关闭显示屏');
+            if (!hasAccess) return;
+            this.sendSwitch('off');
+        });
+        const closeBtn = document.getElementById('closeOverlayOLED');
+        closeBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.close();
+        });
+        this.overlay.addEventListener('click', (e) => {
+            if (e.target === this.overlay) {
+                e.stopPropagation();
+                this.close();
+            }
+        });
+        // 阻止modal内部的点击事件冒泡到overlay
+        const modal = this.overlay.querySelector('.modal');
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+        this.updateButtons();
+    },
+    open() {
+        if (!this.overlay) return;
+        let targetDeviceId = this.deviceId;
+        if (window.PowerControlModal && window.PowerControlModal.currentDeviceId) {
+            targetDeviceId = window.PowerControlModal.currentDeviceId;
+            this.setDeviceId(targetDeviceId);
+        }
+        if (!targetDeviceId) {
+            const deviceId = this.getDeviceId();
+            this.setDeviceId(deviceId);
+            targetDeviceId = deviceId;
+        }
+        if (targetDeviceId) {
+            const titleEl = document.getElementById('modalTitleOLED');
+            if (titleEl) {
+                // 只更新文本部分，不包含emoji（emoji已经在模板中）
+                titleEl.textContent = `${targetDeviceId} OLED显示屏控制`;
+            }
+        }
+        this.overlay.classList.add('show');
+        this.overlay.setAttribute('aria-hidden', 'false');
+        if (this.feedback) {
+            this.feedback.textContent = '';
+            this.feedback.style.maxHeight = '0';
+            this.feedback.style.opacity = '0';
+            this.feedback.style.marginTop = '0';
+        }
+        this.updateButtons();
+        this.refresh();
+    },
+    async refresh() {
+        if (!this.overlay) return;
+        if (this.stateLine) this.stateLine.textContent = '当前状态：读取中...';
+        if (this.updatedLine) this.updatedLine.textContent = '最近操作：--';
+        if (this.viaLine) this.viaLine.textContent = '';
+        try {
+            const deviceId = this.getDeviceId();
+            const resp = await fetch(`/api/oled/state?device_id=${encodeURIComponent(deviceId)}`);
+            const data = await resp.json();
+            if (data?.success) {
+                this.state = (data.state || 'unknown').toLowerCase();
+                this.stateUpdatedAt = data.updated_at || null;
+                this.lastVia = data.last_via || null;
+                if (this.stateLine) {
+                    this.stateLine.textContent = `当前状态：${this.state === 'on' ? '已开启' : this.state === 'off' ? '已关闭' : '未知'}`;
+                }
+                if (this.updatedLine && this.stateUpdatedAt) {
+                    // updated_at可能是时间戳（秒）或null
+                    const timestamp = typeof this.stateUpdatedAt === 'string' ? parseFloat(this.stateUpdatedAt) : this.stateUpdatedAt;
+                    if (timestamp && !isNaN(timestamp)) {
+                        const date = new Date(timestamp * 1000);
+                        this.updatedLine.textContent = `最近操作：${date.toLocaleString('zh-CN')}`;
+                    } else {
+                        this.updatedLine.textContent = '最近操作：--';
+                    }
+                }
+                if (this.viaLine && this.lastVia) {
+                    const source = this.lastVia === 'BLE' ? '蓝牙' : (this.lastVia === 'MQTT' ? 'MQTT' : this.lastVia);
+                    this.viaLine.textContent = `指令来源：${source}`;
+                }
+            }
+        } catch (e) {
+            console.error('刷新OLED状态失败：', e);
+        }
+        this.updateButtons();
+    },
+    async sendSwitch(action) {
+        const targetBtn = action === 'on' ? this.btnOn : this.btnOff;
+        if (!targetBtn) return;
+        const originalText = targetBtn.textContent;
+        try {
+            targetBtn.disabled = true;
+            targetBtn.dataset.loading = '1';
+            targetBtn.textContent = '发送中...';
+            this.showFeedback('', true);
+            const deviceId = this.getDeviceId();
+            const resp = await fetch('/api/oled/switch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action, device_id: deviceId})
+            });
+            const res = await resp.json();
+            if (res?.success) {
+                this.state = (res.state || (action === 'off' ? 'off' : 'on')).toLowerCase();
+                this.stateUpdatedAt = res.updated_at || null;
+                this.lastVia = res.last_via || null;
+                const via = res.via === 'BLE' ? '蓝牙' : res.via === 'MQTT' ? 'MQTT' : '接口';
+                const msg = `已通过${via}发送${action === 'off' ? '关闭' : '开启'}指令`;
+                this.showFeedback(msg);
+                showNotification(`✅ ${msg}`);
+            } else {
+                this.showFeedback(`发送失败：${res?.error || '未知错误'}`);
+            }
+        } catch (e) {
+            this.showFeedback('发送失败，请检查连接');
+        } finally {
+            targetBtn.textContent = originalText;
+            targetBtn.dataset.loading = '0';
+            targetBtn.disabled = false;
+            await this.refresh();
+        }
+    },
+    close() {
+        if (!this.overlay) return;
+        this.overlay.classList.remove('show');
+        this.overlay.setAttribute('aria-hidden', 'true');
+    },
+    updateButtons() {
+        const knowsState = this.state === 'on' || this.state === 'off';
+        if (this.btnOn && this.btnOn.dataset.loading !== '1') this.btnOn.disabled = false;
+        if (this.btnOff && this.btnOff.dataset.loading !== '1') this.btnOff.disabled = false;
+        this.btnOn?.classList.toggle('active', this.state === 'on');
+        this.btnOff?.classList.toggle('active', this.state === 'off');
+        if (!knowsState) {
+            this.btnOn?.classList.remove('active');
+            this.btnOff?.classList.remove('active');
+        }
+    },
+    showFeedback(message, isReset = false) {
+        if (!this.feedback) return;
+        if (isReset || !message) {
+            this.feedback.textContent = '';
+            this.feedback.style.maxHeight = '0';
+            this.feedback.style.opacity = '0';
+            this.feedback.style.marginTop = '0';
+            return;
+        }
+        this.feedback.textContent = message;
+        const words = message.trim().split(/\s+/);
+        const strength = Math.min(words.length * 4, 28);
+        this.feedback.style.maxHeight = `${32 + strength}px`;
+        this.feedback.style.opacity = '1';
+        this.feedback.style.marginTop = '6px';
+    }
+});
+
+// 导出全局函数
+window.openOverlayBLE = () => {
+    if (window.BLEControl) {
+        // 确保已经初始化
+        if (!window.BLEControl.overlay) {
+            window.BLEControl.init();
+        }
+        window.BLEControl.open();
+    }
+};
+
+window.openOverlayOLED = () => {
+    if (window.OLEDControl) {
+        // 确保已经初始化
+        if (!window.OLEDControl.overlay) {
+            window.OLEDControl.init();
+        }
+        window.OLEDControl.open();
+    }
+};
+
+// 将控制对象暴露到全局
+window.BMP180Control = BMP180Control;
+window.BH1750Control = BH1750Control;
+window.BLEControl = BLEControl;
+window.OLEDControl = OLEDControl;
+
+function initSharedControls() {
+    const initAllControls = () => {
         ensurePowerControlTemplate();
         PowerControlModal.init();
         MQ2Control.init();
+        // 初始化新的控制组件
+        if (window.BMP180Control && typeof window.BMP180Control.init === 'function') {
+            window.BMP180Control.init();
+        }
+        if (window.BH1750Control && typeof window.BH1750Control.init === 'function') {
+            window.BH1750Control.init();
+        }
+        if (window.BLEControl && typeof window.BLEControl.init === 'function') {
+            window.BLEControl.init();
+        }
+        if (window.OLEDControl && typeof window.OLEDControl.init === 'function') {
+            window.OLEDControl.init();
+        }
+    };
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initAllControls);
+    } else {
+        initAllControls();
     }
 }
 
 initSharedControls();
 
-// 暴露全局函数以便HTML调用
+// 暴露全局对象和函数以便HTML调用
+window.PowerControlModal = PowerControlModal;
+window.MQ2Control = MQ2Control;
 window.openOverlayMQ2 = () => MQ2Control.open();
 window.closeOverlayMQ2 = () => MQ2Control.close();
 window.openMessageCenter = () => window.MessageCenter.open();

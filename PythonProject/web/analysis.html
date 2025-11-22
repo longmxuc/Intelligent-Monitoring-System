@@ -2985,9 +2985,6 @@
         // 连接WebSocket（用于接收警告消息）
         connectWebSocket();
         
-        // 检查首次访问并显示帮助
-        checkFirstVisit();
-        
         // 设置主题切换按钮
         setupThemeToggle('themeBtn');
         
@@ -3004,6 +3001,53 @@
     // 全局数据存储
     let currentData = [];
     let charts = {};
+    
+    // 设备信息存储（用于 AI 分析）
+    let analysisDeviceInfo = {
+        deviceId: null,  // null 表示全部设备，否则是设备ID
+        deviceName: null,  // 设备名称
+        isMultiDevice: false  // 是否为多设备数据
+    };
+    
+    // 设置分析设备信息（由 common.js 调用）
+    window.setAnalysisDeviceInfo = async function(deviceId) {
+        analysisDeviceInfo.deviceId = deviceId;
+        analysisDeviceInfo.isMultiDevice = !deviceId;
+        
+        if (deviceId) {
+            // 单设备：获取设备名称
+            try {
+                const res = await fetch('/api/devices');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.success && data.devices) {
+                        const device = data.devices.find(d => {
+                            const id = (d.id || d.device_id || '').toString().trim().toUpperCase();
+                            return id === deviceId.toUpperCase();
+                        });
+                        analysisDeviceInfo.deviceName = device ? (device.name || `设备 ${deviceId}`) : `设备 ${deviceId}`;
+                    }
+                }
+            } catch (error) {
+                console.warn('获取设备名称失败：', error);
+                analysisDeviceInfo.deviceName = `设备 ${deviceId}`;
+            }
+        } else {
+            // 全部设备：获取所有设备名称
+            try {
+                const res = await fetch('/api/devices');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.success && data.devices) {
+                        analysisDeviceInfo.deviceName = data.devices.map(d => d.name || `设备 ${d.id}`).join('、');
+                    }
+                }
+            } catch (error) {
+                console.warn('获取设备列表失败：', error);
+                analysisDeviceInfo.deviceName = '全部设备';
+            }
+        }
+    };
     
     // WebSocket连接（用于接收警告消息）
     let wsock = null;
@@ -4793,8 +4837,138 @@
         
         // 调用后端API获取警告数据（根据用户选择的时间段）
         const warningData = await getWarningData();
+        
+        // 分析数据中的设备ID（用于多设备分析）
+        const deviceIdsInData = new Set();
+        currentData.forEach(d => {
+            if (d.device_id) {
+                deviceIdsInData.add(d.device_id.toUpperCase());
+            }
+        });
+        const deviceCount = deviceIdsInData.size;
+        const isMultiDeviceData = deviceCount > 1;
+        
+        // 获取设备名称映射
+        let deviceNameMap = {};
+        try {
+            const res = await fetch('/api/devices');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.success && data.devices) {
+                    data.devices.forEach(device => {
+                        const id = (device.id || device.device_id || '').toString().trim().toUpperCase();
+                        deviceNameMap[id] = device.name || `设备 ${id}`;
+                    });
+                }
+            }
+        } catch (error) {
+            console.warn('获取设备名称映射失败：', error);
+        }
+        
+        // 按设备分组统计数据（仅多设备时）
+        let deviceStats = null;
+        if (isMultiDeviceData) {
+            deviceStats = {};
+            Array.from(deviceIdsInData).forEach(deviceId => {
+                const deviceData = currentData.filter(d => {
+                    const dId = d.device_id ? d.device_id.toString().trim().toUpperCase() : '';
+                    return dId === deviceId;
+                });
+                
+                if (deviceData.length > 0) {
+                    const deviceTemps = deviceData.map(d => d.temp).filter(v => v != null && !isNaN(v));
+                    const deviceHums = deviceData.map(d => d.hum).filter(v => v != null && !isNaN(v));
+                    const deviceLuxs = deviceData.map(d => d.lux).filter(v => v != null && !isNaN(v));
+                    const deviceSmokes = deviceData.map(d => d.smoke).filter(v => v != null && !isNaN(v));
+                    const devicePressures = deviceData.map(d => d.pressure).filter(v => v != null && !isNaN(v));
+                    
+                    const findDeviceTimestamp = (field, value) => {
+                        const record = deviceData.find(d => d[field] === value);
+                        return record ? new Date(record.ts * 1000).toLocaleString('zh-CN') : '未知';
+                    };
+                    
+                    deviceStats[deviceId] = {
+                        设备名称: deviceNameMap[deviceId] || `设备 ${deviceId}`,
+                        设备ID: deviceId,
+                        数据量: deviceData.length,
+                        温度: deviceTemps.length > 0 ? {
+                            平均值: calculateStatistics(deviceTemps).平均值.toFixed(2) + '°C',
+                            最小值: calculateStatistics(deviceTemps).最小值.toFixed(2) + '°C',
+                            最大值: calculateStatistics(deviceTemps).最大值.toFixed(2) + '°C',
+                            标准差: calculateStatistics(deviceTemps).标准差.toFixed(2) + '°C'
+                        } : null,
+                        湿度: deviceHums.length > 0 ? {
+                            平均值: calculateStatistics(deviceHums).平均值.toFixed(2) + '%',
+                            最小值: calculateStatistics(deviceHums).最小值.toFixed(2) + '%',
+                            最大值: calculateStatistics(deviceHums).最大值.toFixed(2) + '%',
+                            标准差: calculateStatistics(deviceHums).标准差.toFixed(2) + '%'
+                        } : null,
+                        光照: deviceLuxs.length > 0 ? {
+                            平均值: calculateStatistics(deviceLuxs).平均值.toFixed(2) + ' lux',
+                            最小值: calculateStatistics(deviceLuxs).最小值.toFixed(2) + ' lux',
+                            最大值: calculateStatistics(deviceLuxs).最大值.toFixed(2) + ' lux',
+                            标准差: calculateStatistics(deviceLuxs).标准差.toFixed(2) + ' lux'
+                        } : null,
+                        烟雾: deviceSmokes.length > 0 ? {
+                            平均值: calculateStatistics(deviceSmokes).平均值.toFixed(2) + ' ppm',
+                            最小值: calculateStatistics(deviceSmokes).最小值.toFixed(2) + ' ppm',
+                            最大值: calculateStatistics(deviceSmokes).最大值.toFixed(2) + ' ppm',
+                            标准差: calculateStatistics(deviceSmokes).标准差.toFixed(2) + ' ppm'
+                        } : null,
+                        大气压: devicePressures.length > 0 ? {
+                            平均值: calculateStatistics(devicePressures).平均值.toFixed(2) + ' hPa',
+                            最小值: calculateStatistics(devicePressures).最小值.toFixed(2) + ' hPa',
+                            最大值: calculateStatistics(devicePressures).最大值.toFixed(2) + ' hPa',
+                            标准差: calculateStatistics(devicePressures).标准差.toFixed(2) + ' hPa'
+                        } : null
+                    };
+                }
+            });
+        }
+        
+        // 修改时间序列数据，包含设备ID（仅多设备时）
+        let tempTimeSeriesWithDevice = null;
+        let humTimeSeriesWithDevice = null;
+        let luxTimeSeriesWithDevice = null;
+        let smokeTimeSeriesWithDevice = null;
+        let pressureTimeSeriesWithDevice = null;
+        
+        if (isMultiDeviceData) {
+            // 为每个设备生成时间序列数据，格式：[[时间, 值, 设备ID], ...]
+            const getTimeSeriesDataWithDevice = (data, field, maxSamples = 30) => {
+                if (!data || data.length === 0) return [];
+                const sortedData = [...data].sort((a, b) => a.ts - b.ts);
+                const validData = sortedData.filter(d => d[field] != null && !isNaN(d[field]));
+                if (validData.length === 0) return [];
+                
+                const step = Math.max(1, Math.floor(validData.length / maxSamples));
+                const sampled = [];
+                for (let i = 0; i < validData.length; i += step) {
+                    const d = validData[i];
+                    const date = new Date(d.ts * 1000);
+                    const timeStr = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+                    const deviceId = d.device_id ? d.device_id.toString().trim().toUpperCase() : '未知';
+                    sampled.push([timeStr, Number(d[field].toFixed(2)), deviceId]);
+                }
+                return sampled.slice(0, maxSamples);
+            };
+            
+            tempTimeSeriesWithDevice = getTimeSeriesDataWithDevice(currentData, 'temp', 30);
+            humTimeSeriesWithDevice = getTimeSeriesDataWithDevice(currentData, 'hum', 30);
+            luxTimeSeriesWithDevice = getTimeSeriesDataWithDevice(currentData, 'lux', 30);
+            smokeTimeSeriesWithDevice = getTimeSeriesDataWithDevice(currentData, 'smoke', 30);
+            pressureTimeSeriesWithDevice = getTimeSeriesDataWithDevice(currentData, 'pressure', 30);
+        }
 
         const summary = {
+            数据来源: {
+                设备信息: analysisDeviceInfo.deviceId 
+                    ? `单设备数据 - ${analysisDeviceInfo.deviceName || `设备 ${analysisDeviceInfo.deviceId}`} (ID: ${analysisDeviceInfo.deviceId})`
+                    : `多设备数据 - ${analysisDeviceInfo.deviceName || '全部设备'} (共 ${deviceCount} 个设备)`,
+                设备数量: deviceCount,
+                设备ID列表: deviceCount > 0 ? Array.from(deviceIdsInData).join(', ') : '未知',
+                是否为多设备数据: isMultiDeviceData
+            },
             数据概览: {
                 总数据量: currentData.length,
                 时间范围: `${new Date(currentData[0].ts * 1000).toLocaleString('zh-CN')} 至 ${new Date(currentData[currentData.length - 1].ts * 1000).toLocaleString('zh-CN')}`,
@@ -4822,12 +4996,19 @@
                     异常值数量: tempOutliers.length,
                     异常值示例: tempOutliers.slice(0, 5) // 只显示前5个
                 } : { 异常值数量: 0, 说明: '未检测到异常值' },
-                时间序列趋势_按时间顺序: tempTimeSeries.length > 0 ? {
-                    数据点数: tempTimeSeries.length,
-                    说明: `时间序列采样（共${currentData.length}条，采样${tempTimeSeries.length}条用于趋势分析）`,
-                    数据格式: "[[时间, 值], ...]",
-                    数据: tempTimeSeries
-                } : null
+                时间序列趋势_按时间顺序: isMultiDeviceData && tempTimeSeriesWithDevice 
+                    ? {
+                        数据点数: tempTimeSeriesWithDevice.length,
+                        说明: `多设备时间序列采样（共${currentData.length}条，采样${tempTimeSeriesWithDevice.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值, 设备ID], ...] - 每个数据点包含时间、数值和设备ID，便于区分不同设备的数据",
+                        数据: tempTimeSeriesWithDevice
+                    }
+                    : tempTimeSeries.length > 0 ? {
+                        数据点数: tempTimeSeries.length,
+                        说明: `时间序列采样（共${currentData.length}条，采样${tempTimeSeries.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值], ...]",
+                        数据: tempTimeSeries
+                    } : null
             } : { 状态: '无有效数据' },
             湿度: humStats ? {
                 统计指标: {
@@ -4850,12 +5031,19 @@
                     异常值数量: humOutliers.length,
                     异常值示例: humOutliers.slice(0, 5)
                 } : { 异常值数量: 0, 说明: '未检测到异常值' },
-                时间序列趋势_按时间顺序: humTimeSeries.length > 0 ? {
-                    数据点数: humTimeSeries.length,
-                    说明: `时间序列采样（共${currentData.length}条，采样${humTimeSeries.length}条用于趋势分析）`,
-                    数据格式: "[[时间, 值], ...]",
-                    数据: humTimeSeries
-                } : null
+                时间序列趋势_按时间顺序: isMultiDeviceData && humTimeSeriesWithDevice 
+                    ? {
+                        数据点数: humTimeSeriesWithDevice.length,
+                        说明: `多设备时间序列采样（共${currentData.length}条，采样${humTimeSeriesWithDevice.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值, 设备ID], ...] - 每个数据点包含时间、数值和设备ID，便于区分不同设备的数据",
+                        数据: humTimeSeriesWithDevice
+                    }
+                    : humTimeSeries.length > 0 ? {
+                        数据点数: humTimeSeries.length,
+                        说明: `时间序列采样（共${currentData.length}条，采样${humTimeSeries.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值], ...]",
+                        数据: humTimeSeries
+                    } : null
             } : { 状态: '无有效数据' },
             光照: luxStats ? {
                 统计指标: {
@@ -4878,12 +5066,19 @@
                     异常值数量: luxOutliers.length,
                     异常值示例: luxOutliers.slice(0, 5)
                 } : { 异常值数量: 0, 说明: '未检测到异常值' },
-                时间序列趋势_按时间顺序: luxTimeSeries.length > 0 ? {
-                    数据点数: luxTimeSeries.length,
-                    说明: `时间序列采样（共${currentData.length}条，采样${luxTimeSeries.length}条用于趋势分析）`,
-                    数据格式: "[[时间, 值], ...]",
-                    数据: luxTimeSeries
-                } : null,
+                时间序列趋势_按时间顺序: isMultiDeviceData && luxTimeSeriesWithDevice 
+                    ? {
+                        数据点数: luxTimeSeriesWithDevice.length,
+                        说明: `多设备时间序列采样（共${currentData.length}条，采样${luxTimeSeriesWithDevice.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值, 设备ID], ...] - 每个数据点包含时间、数值和设备ID，便于区分不同设备的数据",
+                        数据: luxTimeSeriesWithDevice
+                    }
+                    : luxTimeSeries.length > 0 ? {
+                        数据点数: luxTimeSeries.length,
+                        说明: `时间序列采样（共${currentData.length}条，采样${luxTimeSeries.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值], ...]",
+                        数据: luxTimeSeries
+                    } : null,
                 说明: '光照强度反映环境亮度，通常白天较高，夜间较低'
             } : { 状态: '无有效数据' },
             烟雾: smokeStats ? {
@@ -4908,12 +5103,19 @@
                     异常值示例: smokeOutliers.slice(0, 5),
                     警告: '检测到烟雾异常值，请关注安全'
                 } : { 异常值数量: 0, 说明: '未检测到异常值' },
-                时间序列趋势_按时间顺序: smokeTimeSeries.length > 0 ? {
-                    数据点数: smokeTimeSeries.length,
-                    说明: `时间序列采样（共${currentData.length}条，采样${smokeTimeSeries.length}条用于趋势分析）`,
-                    数据格式: "[[时间, 值], ...]",
-                    数据: smokeTimeSeries
-                } : null,
+                时间序列趋势_按时间顺序: isMultiDeviceData && smokeTimeSeriesWithDevice 
+                    ? {
+                        数据点数: smokeTimeSeriesWithDevice.length,
+                        说明: `多设备时间序列采样（共${currentData.length}条，采样${smokeTimeSeriesWithDevice.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值, 设备ID], ...] - 每个数据点包含时间、数值和设备ID，便于区分不同设备的数据",
+                        数据: smokeTimeSeriesWithDevice
+                    }
+                    : smokeTimeSeries.length > 0 ? {
+                        数据点数: smokeTimeSeries.length,
+                        说明: `时间序列采样（共${currentData.length}条，采样${smokeTimeSeries.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值], ...]",
+                        数据: smokeTimeSeries
+                    } : null,
                 说明: '数值越高表示烟雾浓度越大，正常值通常 < 50 ppm'
             } : { 状态: '无有效数据' },
             大气压: pressureStats ? {
@@ -4937,12 +5139,19 @@
                     异常值数量: pressureOutliers.length,
                     异常值示例: pressureOutliers.slice(0, 5)
                 } : { 异常值数量: 0, 说明: '未检测到异常值' },
-                时间序列趋势_按时间顺序: pressureTimeSeries.length > 0 ? {
-                    数据点数: pressureTimeSeries.length,
-                    说明: `时间序列采样（共${currentData.length}条，采样${pressureTimeSeries.length}条用于趋势分析）`,
-                    数据格式: "[[时间, 值], ...]",
-                    数据: pressureTimeSeries
-                } : null,
+                时间序列趋势_按时间顺序: isMultiDeviceData && pressureTimeSeriesWithDevice 
+                    ? {
+                        数据点数: pressureTimeSeriesWithDevice.length,
+                        说明: `多设备时间序列采样（共${currentData.length}条，采样${pressureTimeSeriesWithDevice.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值, 设备ID], ...] - 每个数据点包含时间、数值和设备ID，便于区分不同设备的数据",
+                        数据: pressureTimeSeriesWithDevice
+                    }
+                    : pressureTimeSeries.length > 0 ? {
+                        数据点数: pressureTimeSeries.length,
+                        说明: `时间序列采样（共${currentData.length}条，采样${pressureTimeSeries.length}条用于趋势分析）`,
+                        数据格式: "[[时间, 值], ...]",
+                        数据: pressureTimeSeries
+                    } : null,
                 说明: '标准大气压约为1013.25 hPa，气压变化可能影响实验结果或预示天气变化'
             } : { 状态: '无有效数据' },
             警告数据: warningData ? {
@@ -4962,6 +5171,14 @@
                 说明: '未获取到警告数据（可能该时间段内无警告，或API调用失败）'
             }
         };
+        
+        // 如果是多设备数据，添加按设备分组的统计信息
+        if (isMultiDeviceData && deviceStats) {
+            summary.按设备分组统计 = {
+                说明: '以下按设备ID分组，提供每个设备的独立统计信息，便于对比分析',
+                设备统计: deviceStats
+            };
+        }
 
         // 使用紧凑的JSON格式，减少token消耗
         return `传感器数据摘要（统计指标、时间序列趋势、异常值检测、警告统计）：\n${JSON.stringify(summary, null, 1)}`;
@@ -5256,6 +5473,27 @@
             const dataSummary = await prepareDataSummary();
             console.log('📊 数据摘要:', dataSummary);
             
+            // 分析数据中的设备数量
+            const deviceIdsInData = new Set();
+            currentData.forEach(d => {
+                if (d.device_id) {
+                    deviceIdsInData.add(d.device_id.toUpperCase());
+                }
+            });
+            const deviceCount = deviceIdsInData.size;
+            const isMultiDevice = analysisDeviceInfo.isMultiDevice || (deviceCount > 1);
+            
+            // 构建设备上下文说明
+            const deviceContext = isMultiDevice 
+                ? `当前数据来自多个设备（${analysisDeviceInfo.deviceName || '全部设备'}，共 ${deviceCount} 个设备）。在分析时，你需要：
+            - 数据摘要中已包含"按设备分组统计"部分，提供了每个设备的独立统计信息（平均值、最小值、最大值、标准差等）
+            - 时间序列数据格式为 [[时间, 值, 设备ID], ...]，第三个元素是设备ID，可以用来区分不同设备的数据点
+            - 请根据设备ID（如D01、D02）明确区分每个设备的数据，并在分析中明确指出哪个设备的数据
+            - 比较不同设备的传感器读数差异，识别设备间的关联性和同步性
+            - 分析多设备环境下的整体趋势，同时指出各设备的特征
+            - 提供跨设备的综合分析建议，明确指出每个设备的具体情况`
+                : `当前数据来自单个设备：${analysisDeviceInfo.deviceName || `设备 ${analysisDeviceInfo.deviceId || '未知'}`}。在分析时，请专注于该设备的传感器数据。`;
+            
             // 构建系统提示词（始终包含数据摘要）
             const systemPrompt = `你是一个专业的传感器数据分析助手。
 
@@ -5270,6 +5508,10 @@
             - 识别数据趋势、异常和模式
             - 提供专业的数据洞察和建议
             - 用简洁、专业的中文回答问题
+            ${isMultiDevice ? '- 支持多设备数据的对比分析和综合评估' : ''}
+
+            【数据来源】
+            ${deviceContext}
 
             【当前数据】
             ${dataSummary}

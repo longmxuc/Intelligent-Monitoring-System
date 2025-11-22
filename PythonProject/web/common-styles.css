@@ -737,6 +737,7 @@
     display: flex;
     gap: 12px;
     justify-content: center;
+    margin-top: 10px;
 }
 
 .confirm-btn {
@@ -764,6 +765,76 @@
 
 .confirm-btn-danger:active {
     transform: translateY(0) scale(0.98);
+}
+
+/* 设备选择器样式 */
+.device-select-content {
+    max-width: 420px;
+}
+
+.device-select-hint {
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--muted);
+    text-align: center;
+}
+
+.device-select-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 320px;
+    overflow: auto;
+    margin-bottom: 10px;
+}
+
+.device-select-item {
+    border: 1px solid var(--bd);
+    border-radius: 12px;
+    padding: 12px;
+    background: color-mix(in srgb, var(--card) 96%, transparent);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: all .2s ease;
+    color: var(--text);
+    width: 100%;
+    text-align: left;
+}
+
+.device-select-item:hover {
+    border-color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 12%, var(--card));
+}
+
+.device-select-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.device-select-name {
+    font-weight: 600;
+}
+
+.device-select-id {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.device-select-status {
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--bd) 70%, transparent);
+    background: color-mix(in srgb, var(--card) 92%, transparent);
+    white-space: nowrap;
+}
+
+.device-select-item.active {
+    border-color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 18%, var(--card));
 }
 
 .confirm-btn-cancel {

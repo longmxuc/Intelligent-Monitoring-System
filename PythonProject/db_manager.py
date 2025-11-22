@@ -107,7 +107,7 @@ class DatabaseManager:
     async def insert_sensor_data(self, temp: float, hum: float, lux: Optional[float] = None,
                                  smoke: Optional[float] = None, timestamp: Optional[float] = None,
                                  rs_ro: Optional[float] = None, temp2: Optional[float] = None,
-                                 pressure: Optional[float] = None):
+                                 pressure: Optional[float] = None, device_id: Optional[str] = None):
         """
         插入传感器数据
         
@@ -120,6 +120,7 @@ class DatabaseManager:
             rs_ro: Rs/Ro传感器电阻比值，可选
             temp2: 二号温度传感器（摄氏度），可选
             pressure: 气压（hPa），可选
+            device_id: 设备ID（如：D01, D02），可选
         """
         if timestamp is None:
             timestamp = time.time()
@@ -127,59 +128,86 @@ class DatabaseManager:
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor() as cursor:
+                    if device_id is None or not str(device_id).strip():
+                        device_id = "D01"
+                    device_id = str(device_id).upper()
+                    device_id = device_id.upper()
                     sql = """
-                          INSERT INTO sensor_readings (timestamp, temperature, humidity, brightness, smoke_ppm,
+                          INSERT INTO sensor_readings (device_id, timestamp, temperature, humidity, brightness, smoke_ppm,
                                                        rs_ro, temp2, pressure)
-                          VALUES (FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s) \
+                          VALUES (%s, FROM_UNIXTIME(%s), %s, %s, %s, %s, %s, %s, %s) \
                           """
-                    await cursor.execute(sql, (timestamp, temp, hum, lux, smoke, rs_ro, temp2, pressure))
+                    await cursor.execute(sql, (device_id, timestamp, temp, hum, lux, smoke, rs_ro, temp2, pressure))
                     return True
         except Exception as e:
             print(f"【数据库】插入数据失败：{e}")
             return False
 
-    async def get_recent_data(self, limit=100):
+    async def get_recent_data(self, limit=100, device_id: Optional[str] = None):
         """
         获取最近的传感器数据
         
         参数:
             limit: 返回的数据条数
+            device_id: 设备ID筛选（可选），如：D01, D02
         
         返回:
-            数据列表，每条数据包含 id, timestamp, temperature, humidity, brightness, smoke_ppm
+            数据列表，每条数据包含 id, device_id, timestamp, temperature, humidity, brightness, smoke_ppm
         """
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    sql = """
-                          SELECT id,
-                                 UNIX_TIMESTAMP(timestamp) as timestamp,
-                           temperature, 
-                           humidity, 
-                           brightness,
-                           smoke_ppm,
-                           pressure,
-                           temp2,
-                           rs_ro,
-                           created_at
-                          FROM sensor_readings
-                          ORDER BY id DESC
-                              LIMIT %s \
-                          """
-                    await cursor.execute(sql, (limit,))
+                    if device_id:
+                        sql = """
+                              SELECT id,
+                                     device_id,
+                                     UNIX_TIMESTAMP(timestamp) as timestamp,
+                                     temperature, 
+                                     humidity, 
+                                     brightness,
+                                     smoke_ppm,
+                                     pressure,
+                                     temp2,
+                                     rs_ro,
+                                     created_at
+                              FROM sensor_readings
+                              WHERE device_id = %s
+                              ORDER BY id DESC
+                                  LIMIT %s \
+                              """
+                        await cursor.execute(sql, (device_id, limit))
+                    else:
+                        sql = """
+                              SELECT id,
+                                     device_id,
+                                     UNIX_TIMESTAMP(timestamp) as timestamp,
+                                     temperature, 
+                                     humidity, 
+                                     brightness,
+                                     smoke_ppm,
+                                     pressure,
+                                     temp2,
+                                     rs_ro,
+                                     created_at
+                              FROM sensor_readings
+                              ORDER BY id DESC
+                                  LIMIT %s \
+                              """
+                        await cursor.execute(sql, (limit,))
                     result = await cursor.fetchall()
                     return result
         except Exception as e:
             print(f"【数据库】查询数据失败：{e}")
             return []
 
-    async def get_data_by_time_range(self, start_time: float, end_time: float):
+    async def get_data_by_time_range(self, start_time: float, end_time: float, device_id: Optional[str] = None):
         """
         获取指定时间范围内的传感器数据
         
         参数:
             start_time: 起始时间戳
             end_time: 结束时间戳
+            device_id: 设备ID筛选（可选），如：D01, D02
         
         返回:
             数据列表
@@ -187,30 +215,52 @@ class DatabaseManager:
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    sql = """
-                          SELECT id,
-                                 UNIX_TIMESTAMP(timestamp) as timestamp,
-                           temperature, 
-                           humidity, 
-                           brightness,
-                           smoke_ppm,
-                           pressure,
-                           temp2,
-                           rs_ro,
-                           created_at
-                          FROM sensor_readings
-                          WHERE timestamp BETWEEN FROM_UNIXTIME(%s)
-                            AND FROM_UNIXTIME(%s)
-                          ORDER BY timestamp ASC \
-                          """
-                    await cursor.execute(sql, (start_time, end_time))
+                    if device_id:
+                        sql = """
+                              SELECT id,
+                                     device_id,
+                                     UNIX_TIMESTAMP(timestamp) as timestamp,
+                                     temperature, 
+                                     humidity, 
+                                     brightness,
+                                     smoke_ppm,
+                                     pressure,
+                                     temp2,
+                                     rs_ro,
+                                     created_at
+                              FROM sensor_readings
+                              WHERE timestamp BETWEEN FROM_UNIXTIME(%s)
+                                AND FROM_UNIXTIME(%s)
+                                AND device_id = %s
+                              ORDER BY timestamp ASC \
+                              """
+                        await cursor.execute(sql, (start_time, end_time, device_id))
+                    else:
+                        sql = """
+                              SELECT id,
+                                     device_id,
+                                     UNIX_TIMESTAMP(timestamp) as timestamp,
+                                     temperature, 
+                                     humidity, 
+                                     brightness,
+                                     smoke_ppm,
+                                     pressure,
+                                     temp2,
+                                     rs_ro,
+                                     created_at
+                              FROM sensor_readings
+                              WHERE timestamp BETWEEN FROM_UNIXTIME(%s)
+                                AND FROM_UNIXTIME(%s)
+                              ORDER BY timestamp ASC \
+                              """
+                        await cursor.execute(sql, (start_time, end_time))
                     result = await cursor.fetchall()
                     return result
         except Exception as e:
             print(f"【数据库】查询时间范围数据失败：{e}")
             return []
 
-    async def get_statistics(self):
+    async def get_statistics(self, device_id: Optional[str] = None):
         """
         获取数据库统计信息
         
@@ -220,6 +270,11 @@ class DatabaseManager:
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
+                    params = []
+                    where_clause = ""
+                    if device_id and str(device_id).strip():
+                        where_clause = " WHERE device_id = %s"
+                        params.append(str(device_id).strip().upper())
                     sql = """
                           SELECT COUNT(*)         as total_records,
                                  MIN(temperature) as min_temp,
@@ -239,16 +294,17 @@ class DatabaseManager:
                                  AVG(pressure)    as avg_pressure,
                                  MIN(timestamp)   as first_record,
                                  MAX(timestamp)   as last_record
-                          FROM sensor_readings \
+                          FROM sensor_readings
+                          {} \
                           """
-                    await cursor.execute(sql)
+                    await cursor.execute(sql.format(where_clause), params)
                     result = await cursor.fetchone()
                     return result
         except Exception as e:
             print(f"【数据库】获取统计信息失败：{e}")
             return None
 
-    async def get_aggregated_data(self, start_time: float, end_time: float, interval_seconds: int = 300):
+    async def get_aggregated_data(self, start_time: float, end_time: float, interval_seconds: int = 300, device_id: Optional[str] = None):
         """
         获取指定时间范围内的聚合数据（按时间间隔聚合）
         
@@ -256,6 +312,7 @@ class DatabaseManager:
             start_time: 起始时间戳（秒）
             end_time: 结束时间戳（秒）
             interval_seconds: 聚合间隔（秒），默认300秒（5分钟）
+            device_id: 设备ID筛选（可选），如：D01, D02
         
         返回:
             聚合后的数据列表，每个时间间隔包含平均值、最大值、最小值
@@ -266,65 +323,115 @@ class DatabaseManager:
                     # 使用MySQL的时间函数进行聚合
                     # 将时间戳按间隔分组，计算每组的平均值、最大值、最小值
                     # 使用子查询来避免 only_full_group_by 错误
-                    sql = """
-                          SELECT 
-                                 time_bucket as timestamp,
-                                 AVG(temperature) as temperature,
-                                 MIN(temperature) as min_temp,
-                                 MAX(temperature) as max_temp,
-                                 AVG(humidity) as humidity,
-                                 MIN(humidity) as min_hum,
-                                 MAX(humidity) as max_hum,
-                                 AVG(brightness) as brightness,
-                                 MIN(brightness) as min_lux,
-                                 MAX(brightness) as max_lux,
-                                 AVG(smoke_ppm) as smoke_ppm,
-                                 MIN(smoke_ppm) as min_smoke,
-                                 MAX(smoke_ppm) as max_smoke,
-                                 AVG(pressure) as pressure,
-                                 MIN(pressure) as min_pressure,
-                                 MAX(pressure) as max_pressure,
-                                 AVG(temp2) as temp2,
-                                 MIN(temp2) as min_temp2,
-                                 MAX(temp2) as max_temp2,
-                                 AVG(rs_ro) as rs_ro,
-                                 MIN(rs_ro) as min_rs_ro,
-                                 MAX(rs_ro) as max_rs_ro,
-                                 COUNT(*) as data_count
-                          FROM (
+                    if device_id:
+                        sql = """
                               SELECT 
-                                     UNIX_TIMESTAMP(
-                                         FROM_UNIXTIME(
-                                             FLOOR(UNIX_TIMESTAMP(timestamp) / %s) * %s
-                                         )
-                                     ) as time_bucket,
-                                     temperature,
-                                     humidity,
-                                     brightness,
-                                     smoke_ppm,
-                                     pressure,
-                                     temp2,
-                                     rs_ro
-                              FROM sensor_readings
-                              WHERE timestamp BETWEEN FROM_UNIXTIME(%s) AND FROM_UNIXTIME(%s)
-                          ) as grouped_data
-                          GROUP BY time_bucket
-                          ORDER BY time_bucket ASC
-                          """
-                    await cursor.execute(sql, (interval_seconds, interval_seconds, start_time, end_time))
+                                     time_bucket as timestamp,
+                                     AVG(temperature) as temperature,
+                                     MIN(temperature) as min_temp,
+                                     MAX(temperature) as max_temp,
+                                     AVG(humidity) as humidity,
+                                     MIN(humidity) as min_hum,
+                                     MAX(humidity) as max_hum,
+                                     AVG(brightness) as brightness,
+                                     MIN(brightness) as min_lux,
+                                     MAX(brightness) as max_lux,
+                                     AVG(smoke_ppm) as smoke_ppm,
+                                     MIN(smoke_ppm) as min_smoke,
+                                     MAX(smoke_ppm) as max_smoke,
+                                     AVG(pressure) as pressure,
+                                     MIN(pressure) as min_pressure,
+                                     MAX(pressure) as max_pressure,
+                                     AVG(temp2) as temp2,
+                                     MIN(temp2) as min_temp2,
+                                     MAX(temp2) as max_temp2,
+                                     AVG(rs_ro) as rs_ro,
+                                     MIN(rs_ro) as min_rs_ro,
+                                     MAX(rs_ro) as max_rs_ro,
+                                     COUNT(*) as data_count
+                              FROM (
+                                  SELECT 
+                                         UNIX_TIMESTAMP(
+                                             FROM_UNIXTIME(
+                                                 FLOOR(UNIX_TIMESTAMP(timestamp) / %s) * %s
+                                             )
+                                         ) as time_bucket,
+                                         temperature,
+                                         humidity,
+                                         brightness,
+                                         smoke_ppm,
+                                         pressure,
+                                         temp2,
+                                         rs_ro
+                                  FROM sensor_readings
+                                  WHERE timestamp BETWEEN FROM_UNIXTIME(%s) AND FROM_UNIXTIME(%s)
+                                    AND device_id = %s
+                              ) as grouped_data
+                              GROUP BY time_bucket
+                              ORDER BY time_bucket ASC
+                              """
+                        await cursor.execute(sql, (interval_seconds, interval_seconds, start_time, end_time, device_id))
+                    else:
+                        sql = """
+                              SELECT 
+                                     time_bucket as timestamp,
+                                     AVG(temperature) as temperature,
+                                     MIN(temperature) as min_temp,
+                                     MAX(temperature) as max_temp,
+                                     AVG(humidity) as humidity,
+                                     MIN(humidity) as min_hum,
+                                     MAX(humidity) as max_hum,
+                                     AVG(brightness) as brightness,
+                                     MIN(brightness) as min_lux,
+                                     MAX(brightness) as max_lux,
+                                     AVG(smoke_ppm) as smoke_ppm,
+                                     MIN(smoke_ppm) as min_smoke,
+                                     MAX(smoke_ppm) as max_smoke,
+                                     AVG(pressure) as pressure,
+                                     MIN(pressure) as min_pressure,
+                                     MAX(pressure) as max_pressure,
+                                     AVG(temp2) as temp2,
+                                     MIN(temp2) as min_temp2,
+                                     MAX(temp2) as max_temp2,
+                                     AVG(rs_ro) as rs_ro,
+                                     MIN(rs_ro) as min_rs_ro,
+                                     MAX(rs_ro) as max_rs_ro,
+                                     COUNT(*) as data_count
+                              FROM (
+                                  SELECT 
+                                         UNIX_TIMESTAMP(
+                                             FROM_UNIXTIME(
+                                                 FLOOR(UNIX_TIMESTAMP(timestamp) / %s) * %s
+                                             )
+                                         ) as time_bucket,
+                                         temperature,
+                                         humidity,
+                                         brightness,
+                                         smoke_ppm,
+                                         pressure,
+                                         temp2,
+                                         rs_ro
+                                  FROM sensor_readings
+                                  WHERE timestamp BETWEEN FROM_UNIXTIME(%s) AND FROM_UNIXTIME(%s)
+                              ) as grouped_data
+                              GROUP BY time_bucket
+                              ORDER BY time_bucket ASC
+                              """
+                        await cursor.execute(sql, (interval_seconds, interval_seconds, start_time, end_time))
                     result = await cursor.fetchall()
                     return result
         except Exception as e:
             print(f"【数据库】查询聚合数据失败：{e}")
             return []
 
-    async def count_data_by_time_range(self, start_time: float, end_time: float):
+    async def count_data_by_time_range(self, start_time: float, end_time: float, device_id: Optional[str] = None):
         """
         统计指定时间范围内的数据条数
         
         参数:
             start_time: 起始时间戳（秒）
             end_time: 结束时间戳（秒）
+            device_id: 设备ID筛选（可选），如：D01, D02
         
         返回:
             数据条数
@@ -332,12 +439,21 @@ class DatabaseManager:
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    sql = """
-                          SELECT COUNT(*) as count
-                          FROM sensor_readings
-                          WHERE timestamp BETWEEN FROM_UNIXTIME(%s) AND FROM_UNIXTIME(%s)
-                          """
-                    await cursor.execute(sql, (start_time, end_time))
+                    if device_id:
+                        sql = """
+                              SELECT COUNT(*) as count
+                              FROM sensor_readings
+                              WHERE timestamp BETWEEN FROM_UNIXTIME(%s) AND FROM_UNIXTIME(%s)
+                                AND device_id = %s
+                              """
+                        await cursor.execute(sql, (start_time, end_time, device_id))
+                    else:
+                        sql = """
+                              SELECT COUNT(*) as count
+                              FROM sensor_readings
+                              WHERE timestamp BETWEEN FROM_UNIXTIME(%s) AND FROM_UNIXTIME(%s)
+                              """
+                        await cursor.execute(sql, (start_time, end_time))
                     result = await cursor.fetchone()
                     return result['count'] if result else 0
         except Exception as e:
@@ -346,7 +462,8 @@ class DatabaseManager:
 
     async def insert_warning_data(self, warning_type: str, warning_message: str,
                                   warning_value: Optional[float] = None,
-                                  warning_start_time: Optional[float] = None):
+                                  warning_start_time: Optional[float] = None,
+                                  device_id: Optional[str] = None):
         """
         插入警告数据
         
@@ -355,6 +472,7 @@ class DatabaseManager:
             warning_message: 警告消息（原始消息）
             warning_value: 异常值（如果是异常数据）
             warning_start_time: 异常开始时间戳，如果为None则使用当前时间
+            device_id: 设备ID（如：D01, D02），如果为None则默认 D01
         """
         if warning_start_time is None:
             warning_start_time = time.time()
@@ -362,18 +480,22 @@ class DatabaseManager:
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor() as cursor:
+                    if device_id is None or not str(device_id).strip():
+                        device_id = "D01"
+                    device_id = device_id.upper()
                     sql = """
-                          INSERT INTO warning_data (warning_type, warning_message, warning_value,
+                          INSERT INTO warning_data (warning_type, device_id, warning_message, warning_value,
                                                      is_resolved, warning_start_time)
-                          VALUES (%s, %s, %s, 0, FROM_UNIXTIME(%s))
+                          VALUES (%s, %s, %s, %s, 0, FROM_UNIXTIME(%s))
                           """
-                    await cursor.execute(sql, (warning_type, warning_message, warning_value, warning_start_time))
+                    await cursor.execute(sql, (warning_type, device_id, warning_message, warning_value, warning_start_time))
                     return True
         except Exception as e:
             print(f"【数据库】插入警告数据失败：{e}")
             return False
 
-    async def resolve_warning(self, warning_type: str, warning_resolved_time: Optional[float] = None):
+    async def resolve_warning(self, warning_type: str, warning_resolved_time: Optional[float] = None,
+                              device_id: Optional[str] = None):
         """
         标记警告为已恢复（更新恢复时间）
         
@@ -387,16 +509,19 @@ class DatabaseManager:
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor() as cursor:
-                    # 更新该类型最新的未恢复警告为已恢复
+                    if device_id is None or not str(device_id).strip():
+                        device_id = "D01"
+                    # 更新该类型、该设备最新的未恢复警告为已恢复
                     sql = """
                           UPDATE warning_data
                           SET is_resolved = 1, warning_resolved_time = FROM_UNIXTIME(%s)
                           WHERE warning_type = %s 
+                            AND device_id = %s
                             AND is_resolved = 0
                           ORDER BY warning_start_time DESC
                           LIMIT 1
                           """
-                    await cursor.execute(sql, (warning_resolved_time, warning_type))
+                    await cursor.execute(sql, (warning_resolved_time, warning_type, device_id))
                     affected_rows = cursor.rowcount
                     if affected_rows > 0:
                         print(f"【数据库】已标记警告类型 {warning_type} 为已恢复")
@@ -409,7 +534,8 @@ class DatabaseManager:
             return False
 
     async def get_warning_data(self, limit: int = 100, warning_type: Optional[str] = None,
-                               is_resolved: Optional[int] = None, date: Optional[str] = None):
+                               is_resolved: Optional[int] = None, date: Optional[str] = None,
+                               device_id: Optional[str] = None):
         """
         获取警告数据
         
@@ -442,12 +568,17 @@ class DatabaseManager:
                         where_conditions.append("DATE(warning_start_time) = %s")
                         params.append(date)
 
+                    if device_id and str(device_id).strip():
+                        where_conditions.append("device_id = %s")
+                        params.append(str(device_id).strip().upper())
+
                     where_clause = " WHERE " + " AND ".join(where_conditions) if where_conditions else ""
                     params.append(limit)
 
                     sql = f"""
                           SELECT id,
                                  warning_type,
+                                 device_id,
                                  warning_message,
                                  warning_value,
                                  is_resolved,
@@ -466,7 +597,7 @@ class DatabaseManager:
             print(f"【数据库】查询警告数据失败：{e}")
             return []
 
-    async def get_warning_dates(self):
+    async def get_warning_dates(self, device_id: Optional[str] = None):
         """
         获取所有有警告数据的日期列表及每个日期的消息数量
         
@@ -476,13 +607,20 @@ class DatabaseManager:
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    sql = """
+                    params = []
+                    where_clause = ""
+                    if device_id and str(device_id).strip():
+                        where_clause = "WHERE device_id = %s"
+                        params.append(str(device_id).strip().upper())
+
+                    sql = f"""
                           SELECT DATE(warning_start_time) as date, COUNT(*) as count
                           FROM warning_data
+                          {where_clause}
                           GROUP BY DATE(warning_start_time)
                           ORDER BY date DESC
                           """
-                    await cursor.execute(sql)
+                    await cursor.execute(sql, params)
                     result = await cursor.fetchall()
                     # 转换为字典列表
                     dates = []
@@ -497,7 +635,7 @@ class DatabaseManager:
             print(f"【数据库】查询警告日期列表失败：{e}")
             return []
 
-    async def get_unresolved_warning_types(self):
+    async def get_unresolved_warning_types(self, device_id: Optional[str] = None):
         """
         获取所有未恢复的警告类型列表
         
@@ -507,12 +645,22 @@ class DatabaseManager:
         try:
             async with self.get_connection() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
-                    sql = """
-                          SELECT DISTINCT warning_type
-                          FROM warning_data
-                          WHERE is_resolved = 0
-                          """
-                    await cursor.execute(sql)
+                    if device_id and device_id.strip():
+                        device_id = device_id.strip().upper()
+                        sql = """
+                              SELECT DISTINCT warning_type
+                              FROM warning_data
+                              WHERE is_resolved = 0
+                                AND device_id = %s
+                              """
+                        await cursor.execute(sql, (device_id,))
+                    else:
+                        sql = """
+                              SELECT DISTINCT warning_type
+                              FROM warning_data
+                              WHERE is_resolved = 0
+                              """
+                        await cursor.execute(sql)
                     result = await cursor.fetchall()
                     # 转换为集合
                     warning_types = set()
@@ -538,6 +686,7 @@ class DatabaseManager:
                     create_sql = """
                         CREATE TABLE IF NOT EXISTS `sensor_states` (
                             `sensor_name` VARCHAR(64) NOT NULL COMMENT '传感器名称（如：MQ2）',
+                            `device_id` VARCHAR(16) NOT NULL DEFAULT 'D01' COMMENT '设备ID（如：D01, D02）',
                             `sensor_state` ENUM('on','off') NOT NULL DEFAULT 'on' COMMENT '传感器状态：on=开启, off=关闭',
                             `last_via` VARCHAR(16) DEFAULT NULL COMMENT '最近一次操作来源：BLE/MQTT',
                             `mode` VARCHAR(16) DEFAULT 'balance' COMMENT '运行模式：eco=节能, balance=平衡, safe=安全, always=持续供电, dev=开发测试',
@@ -550,7 +699,7 @@ class DatabaseManager:
                             `samples_target` INT DEFAULT NULL COMMENT '计划采集条数',
                             `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
                                 ON UPDATE CURRENT_TIMESTAMP COMMENT '最近一次更新时间',
-                            PRIMARY KEY (`sensor_name`)
+                            PRIMARY KEY (`sensor_name`, `device_id`)
                         ) ENGINE=InnoDB
                           DEFAULT CHARSET=utf8mb4
                           COMMENT='传感器状态表';
@@ -658,6 +807,37 @@ class DatabaseManager:
                                 print("【数据库】✓ 已添加字段：samples_target")
                             except Exception as e:
                                 print(f"【数据库】添加samples_target字段失败：{e}")
+
+                        # 新增：设备ID字段（用于区分不同设备的传感器状态）
+                        if 'device_id' not in existing_columns:
+                            try:
+                                sql_add_device_id = """
+                                    ALTER TABLE `sensor_states`
+                                    ADD COLUMN `device_id` VARCHAR(16) NOT NULL DEFAULT 'D01'
+                                        COMMENT '设备ID（如：D01, D02）' AFTER `sensor_name`
+                                """
+                                await cursor.execute(sql_add_device_id)
+                                print("【数据库】✓ 已在 sensor_states 中添加字段：device_id，并默认初始化为 D01")
+                            except Exception as e:
+                                print(f"【数据库】添加 sensor_states.device_id 字段失败：{e}")
+                        # 将历史数据的设备ID统一初始化为 D01，并确保列定义为 NOT NULL DEFAULT 'D01'
+                        try:
+                            await cursor.execute("UPDATE `sensor_states` SET `device_id` = 'D01' WHERE `device_id` IS NULL OR `device_id` = ''")
+                            await cursor.execute("ALTER TABLE `sensor_states` MODIFY COLUMN `device_id` VARCHAR(16) NOT NULL DEFAULT 'D01' COMMENT '设备ID（如：D01, D02）'")
+                        except Exception as e:
+                            print(f"【数据库】规范化 sensor_states.device_id 字段失败：{e}")
+
+                        # 确保主键包含 device_id（实现按设备区分状态）
+                        try:
+                            await cursor.execute("SHOW KEYS FROM `sensor_states` WHERE Key_name = 'PRIMARY'")
+                            primary_rows = await cursor.fetchall()
+                            primary_columns = [row[4] for row in primary_rows] if primary_rows else []
+                            if primary_columns != ['sensor_name', 'device_id']:
+                                await cursor.execute("ALTER TABLE `sensor_states` DROP PRIMARY KEY")
+                                await cursor.execute("ALTER TABLE `sensor_states` ADD PRIMARY KEY (`sensor_name`, `device_id`)")
+                                print("【数据库】✓ 已将 sensor_states 主键调整为 (sensor_name, device_id)")
+                        except Exception as e:
+                            print(f"【数据库】调整 sensor_states 主键失败：{e}")
         except Exception as e:
             print(f"【数据库】创建传感器状态表失败：{e}")
             import traceback
@@ -675,6 +855,7 @@ class DatabaseManager:
                           CREATE TABLE IF NOT EXISTS warning_data (
                               id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
                               warning_type VARCHAR(10) NOT NULL COMMENT '警告类型：T(温度), H(湿度), B(亮度), S(ppm), P(大气压)',
+                              device_id VARCHAR(16) NOT NULL DEFAULT 'D01' COMMENT '设备ID（如：D01, D02）',
                               warning_message VARCHAR(100) NOT NULL COMMENT '警告消息（原始消息）',
                               warning_value DECIMAL(10, 2) DEFAULT NULL COMMENT '异常值（如果是异常数据）',
                               is_resolved TINYINT DEFAULT 0 COMMENT '是否已恢复：0=未恢复, 1=已恢复',
@@ -684,12 +865,45 @@ class DatabaseManager:
                               INDEX idx_warning_type (warning_type),
                               INDEX idx_warning_start_time (warning_start_time),
                               INDEX idx_is_resolved (is_resolved),
-                              INDEX idx_created_at (created_at)
+                              INDEX idx_created_at (created_at),
+                              INDEX idx_warning_device_id (device_id)
                           ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                           COMMENT='警告数据表，存储传感器异常警告信息'
                           """
                     if not table_exists:
                         await cursor.execute(sql)
+                    else:
+                        # 旧表结构：没有 device_id 字段，需要自动添加并初始化为 D01
+                        await cursor.execute("DESCRIBE `warning_data`")
+                        existing_columns = {row[0] for row in await cursor.fetchall()}
+
+                        if 'device_id' not in existing_columns:
+                            try:
+                                sql_add_device_id = """
+                                    ALTER TABLE `warning_data`
+                                    ADD COLUMN `device_id` VARCHAR(16) NOT NULL DEFAULT 'D01'
+                                        COMMENT '设备ID（如：D01, D02）' AFTER `warning_type`
+                                """
+                                await cursor.execute(sql_add_device_id)
+                                print("【数据库】✓ 已在 warning_data 中添加字段：device_id，并默认初始化为 D01")
+                            except Exception as e:
+                                print(f"【数据库】添加 warning_data.device_id 字段失败：{e}")
+                        # 初始化并规范化 device_id 列
+                        try:
+                            await cursor.execute("UPDATE `warning_data` SET `device_id` = 'D01' WHERE `device_id` IS NULL OR `device_id` = ''")
+                            await cursor.execute("ALTER TABLE `warning_data` MODIFY COLUMN `device_id` VARCHAR(16) NOT NULL DEFAULT 'D01' COMMENT '设备ID（如：D01, D02）'")
+                        except Exception as e:
+                            print(f"【数据库】规范化 warning_data.device_id 字段失败：{e}")
+                        # 添加索引（若不存在）
+                        try:
+                            sql_add_index = """
+                                ALTER TABLE `warning_data`
+                                ADD INDEX `idx_warning_device_id` (`device_id`)
+                            """
+                            await cursor.execute(sql_add_index)
+                            print("【数据库】✓ 已为 warning_data.device_id 添加索引：idx_warning_device_id")
+                        except Exception:
+                            pass
         except Exception as e:
             print(f"【数据库】创建警告数据表失败：{e}")
 
@@ -704,6 +918,7 @@ class DatabaseManager:
                     sql = """
                           CREATE TABLE IF NOT EXISTS sensor_readings (
                               id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+                              device_id VARCHAR(16) NOT NULL DEFAULT 'D01' COMMENT '设备ID（如：D01, D02）',
                               timestamp DATETIME NOT NULL COMMENT '数据采集时间',
                               temperature DECIMAL(5, 2) NOT NULL COMMENT '温度（摄氏度）',
                               humidity DECIMAL(5, 2) NOT NULL COMMENT '湿度（百分比）',
@@ -715,21 +930,61 @@ class DatabaseManager:
                               created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
                               PRIMARY KEY (id) USING BTREE,
                               INDEX idx_timestamp(timestamp) USING BTREE COMMENT '时间戳索引',
-                              INDEX idx_created_at(created_at) USING BTREE COMMENT '创建时间索引'
+                              INDEX idx_created_at(created_at) USING BTREE COMMENT '创建时间索引',
+                              INDEX idx_device_id(device_id) USING BTREE COMMENT '设备ID索引'
                           ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                           COMMENT='传感器数据表'
                           """
                     if not table_exists:
                         await cursor.execute(sql)
+                    else:
+                        # 如果表已存在，检查并添加 device_id 字段
+                        await cursor.execute("DESCRIBE `sensor_readings`")
+                        existing_columns = {row[0] for row in await cursor.fetchall()}
+                        
+                        if 'device_id' not in existing_columns:
+                            try:
+                                # 先添加字段
+                                sql_add_device_id = """
+                                    ALTER TABLE `sensor_readings`
+                                    ADD COLUMN `device_id` VARCHAR(16) NOT NULL DEFAULT 'D01'
+                                        COMMENT '设备ID（如：D01, D02）' AFTER `id`
+                                """
+                                await cursor.execute(sql_add_device_id)
+                                print("【数据库】✓ 已在 sensor_readings 中添加字段：device_id")
+                            except Exception as e:
+                                print(f"【数据库】添加 sensor_readings.device_id 字段失败：{e}")
+                                import traceback
+                                traceback.print_exc()
+                        # 规范化历史数据并确保列定义
+                        try:
+                            await cursor.execute("UPDATE `sensor_readings` SET `device_id` = 'D01' WHERE `device_id` IS NULL OR `device_id` = ''")
+                            await cursor.execute("ALTER TABLE `sensor_readings` MODIFY COLUMN `device_id` VARCHAR(16) NOT NULL DEFAULT 'D01' COMMENT '设备ID（如：D01, D02）'")
+                        except Exception as e:
+                            print(f"【数据库】规范化 sensor_readings.device_id 字段失败：{e}")
+
+                        # 确保存在索引
+                        try:
+                            sql_add_index = """
+                                ALTER TABLE `sensor_readings`
+                                ADD INDEX `idx_device_id` (`device_id`) USING BTREE COMMENT '设备ID索引'
+                            """
+                            await cursor.execute(sql_add_index)
+                            print("【数据库】✓ 已为 sensor_readings.device_id 添加索引：idx_device_id")
+                        except Exception:
+                            # 索引可能已存在，忽略错误
+                            pass
         except Exception as e:
             print(f"【数据库】创建传感器数据表失败：{e}")
 
     async def set_sensor_state(self, sensor_name: str, sensor_state: str = None, via: str = UNSET,
                                mode: str = UNSET, next_run_time: float = UNSET, last_value: float = UNSET,
                                phase: str = UNSET, phase_message: str = UNSET, phase_until: float = UNSET,
-                               samples_collected: int = UNSET, samples_target: int = UNSET):
+                               samples_collected: int = UNSET, samples_target: int = UNSET,
+                               device_id: str = "D01"):
         """保存传感器状态"""
         sensor_name = sensor_name.upper()
+        device_id = (device_id or "D01").upper()
         normalized_state = sensor_state.lower() if sensor_state else None
         try:
             await self.ensure_sensor_state_table()
@@ -740,8 +995,8 @@ class DatabaseManager:
                     columns = {row[0] for row in await cursor.fetchall()}
 
                     # 检查记录是否存在，便于在未提供状态时保持原值
-                    await cursor.execute("SELECT sensor_state FROM `sensor_states` WHERE `sensor_name` = %s LIMIT 1",
-                                         (sensor_name,))
+                    await cursor.execute("SELECT sensor_state FROM `sensor_states` WHERE `sensor_name` = %s AND `device_id` = %s LIMIT 1",
+                                         (sensor_name, device_id))
                     existing_row = await cursor.fetchone()
                     record_exists = existing_row is not None
 
@@ -751,9 +1006,9 @@ class DatabaseManager:
                         else:
                             normalized_state = 'on'
 
-                    columns_clause = ["`sensor_name`", "`sensor_state`"]
-                    values_clause = ["%s", "%s"]
-                    sql_values = [sensor_name, normalized_state]
+                    columns_clause = ["`sensor_name`", "`device_id`", "`sensor_state`"]
+                    values_clause = ["%s", "%s", "%s"]
+                    sql_values = [sensor_name, device_id, normalized_state]
                     alias = "new_state"
 
                     def alias_ref(column: str) -> str:
@@ -831,9 +1086,10 @@ class DatabaseManager:
             traceback.print_exc()
             return False
 
-    async def get_sensor_state(self, sensor_name: str):
+    async def get_sensor_state(self, sensor_name: str, device_id: str = "D01"):
         """获取传感器状态"""
         sensor_name = sensor_name.upper()
+        device_id = (device_id or "D01").upper()
         try:
             await self.ensure_sensor_state_table()
             async with self.get_connection() as conn:
@@ -872,12 +1128,15 @@ class DatabaseManager:
                     if not select_fields:
                         select_fields = ["`sensor_state`", "`last_via`"]
 
+                    if 'device_id' in columns:
+                        select_fields.append("`device_id`")
+
                     sql = f"""
                           SELECT {', '.join(select_fields)}
                           FROM `sensor_states`
-                          WHERE `sensor_name` = %s
+                          WHERE `sensor_name` = %s AND `device_id` = %s
                           """
-                    await cursor.execute(sql, (sensor_name,))
+                    await cursor.execute(sql, (sensor_name, device_id))
                     result = await cursor.fetchone()
 
                     # 如果字段不存在，设置默认值
@@ -898,6 +1157,9 @@ class DatabaseManager:
                             result['samples_collected'] = None
                         if 'samples_target' not in result:
                             result['samples_target'] = None
+
+                    if result is not None and 'device_id' not in result:
+                        result['device_id'] = device_id
 
                     return result
         except Exception as e:

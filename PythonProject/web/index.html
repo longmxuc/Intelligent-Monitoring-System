@@ -1065,8 +1065,8 @@
 <div class="wrap">
     <header>
         <h1>
-            <img src="../resource/logo.png" alt="Logo" class="logo">
-            <span>智能环境监测系统</span>
+            <img src="../resource/logo.png" alt="Logo" class="logo" id="homeLogo" style="cursor: pointer;">
+            <span id="pageTitle">智能环境监测系统</span>
         </h1>
         <div class="status">
             <div class="status-badge-wrapper">
@@ -1986,9 +1986,9 @@
         card.classList.remove('card-warning', 'card-danger');
         
         // 过低或过高都警告
-        if (value < 995 || value > 1025) {
+        if (value < 995 || value > 1030) {
             card.classList.add('card-danger');
-        } else if (value < 1000 || value > 1020) {
+        } else if (value < 1000 || value > 1025) {
             card.classList.add('card-warning');
         }
     }
@@ -2972,7 +2972,10 @@
                 };
             } else {
                 // 自己从API获取数据
-                const url = customUrl || (limit === -1 ? '/api/history?limit=-1' : `/api/history?limit=${limit}`);
+                let url = customUrl || (limit === -1 ? '/api/history?limit=-1' : `/api/history?limit=${limit}`);
+                if (window.ensureDeviceParam) {
+                    url = window.ensureDeviceParam(url);
+                }
                 console.log('🔄 正在从数据库加载历史数据...');
                 console.log('📡 请求地址:', url);
 
@@ -3558,6 +3561,16 @@
     function handleLocationData(msg) {
         console.log('📍 收到定位数据:', msg);
         
+        // 检查设备ID是否匹配（如果消息中有device_id字段）
+        if (msg.device_id) {
+            const msgDeviceId = msg.device_id.toUpperCase();
+            const currentDeviceId = (window.getSelectedDeviceId ? window.getSelectedDeviceId() : selectedDeviceId).toUpperCase();
+            if (msgDeviceId !== currentDeviceId) {
+                console.log(`📍 定位数据设备ID不匹配，忽略：消息设备=${msgDeviceId}，当前设备=${currentDeviceId}`);
+                return; // 不是当前设备的定位数据，忽略
+            }
+        }
+        
         if (msg.lon && msg.lat) {
             const lon = parseFloat(msg.lon);
             const lat = parseFloat(msg.lat);
@@ -3657,11 +3670,17 @@
         queryBtn.textContent = '⏳ 正在获取定位...';
 
         try {
+            // 获取当前设备ID
+            const deviceId = window.getSelectedDeviceId ? window.getSelectedDeviceId() : selectedDeviceId;
+            
             const response = await fetch('/api/location/query', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
-                }
+                },
+                body: JSON.stringify({
+                    device_id: deviceId
+                })
             });
 
             const result = await response.json();
@@ -3783,6 +3802,61 @@
         });
     }
 
+    // 当前页面目标设备（来自 URL 参数，默认 D01，用于区分多设备数据）
+    const urlParams = new URLSearchParams(window.location.search || "");
+    const selectedDeviceId = (urlParams.get("device_id") || "D01").toUpperCase();
+    window.selectedDeviceId = selectedDeviceId;
+    const pageTitleEl = document.getElementById('pageTitle');
+    
+    // 异步加载设备名称并更新标题
+    async function updatePageTitle() {
+        if (!pageTitleEl) return;
+        try {
+            const res = await fetch('/api/devices');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.success && data.devices) {
+                    const device = data.devices.find(d => {
+                        const id = (d.id || d.device_id || '').toString().trim().toUpperCase();
+                        return id === selectedDeviceId;
+                    });
+                    if (device && device.name) {
+                        pageTitleEl.textContent = `实时数据 · ${device.name}`;
+                        return;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('获取设备名称失败，使用默认标题：', error);
+        }
+        // 如果获取失败，使用默认格式
+        pageTitleEl.textContent = `实时数据 · 设备 ${selectedDeviceId}`;
+    }
+    
+    // 立即更新标题（使用默认格式），然后异步获取设备名称
+    if (pageTitleEl) {
+        pageTitleEl.textContent = `实时数据 · 设备 ${selectedDeviceId}`;
+        updatePageTitle();
+    }
+    const homeLogo = document.getElementById('homeLogo');
+    if (homeLogo) {
+        homeLogo.addEventListener('click', () => {
+            window.location.href = '/';
+        });
+    }
+    if (!window.getSelectedDeviceId) {
+        window.getSelectedDeviceId = () => selectedDeviceId;
+    }
+    if (!window.ensureDeviceParam) {
+        window.ensureDeviceParam = function(url) {
+            const device = window.getSelectedDeviceId ? window.getSelectedDeviceId() : selectedDeviceId;
+            if (!device) return url;
+            if (/([?&])device_id=/i.test(url)) return url;
+            const sep = url.includes('?') ? '&' : '?';
+            return `${url}${sep}device_id=${encodeURIComponent(device)}`;
+        };
+    }
+
     function connect() {
         setWsStatus(false);
         const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
@@ -3799,9 +3873,18 @@
         wsock.onmessage = e => {
             try {
                 const msg = JSON.parse(e.data);
+                const msgType = msg.type;
+                
+                // 多设备过滤：仅接收当前设备的数据（无 device_id 的老消息按 D01 处理）
+                if (msgType === 'reading' || msgType === 'warning' || msgType === 'warning_resolved' || msgType === 'location') {
+                    const msgDeviceId = (msg.device_id || 'D01').toUpperCase();
+                    if (selectedDeviceId && msgDeviceId !== selectedDeviceId) {
+                        return; // 非当前设备的数据，直接丢弃
+                    }
+                }
                 
                 // 处理警告通知
-                if (msg.type === 'warning') {
+                if (msgType === 'warning') {
                     if (window.MessageCenter) {
                         window.MessageCenter.handleWarningMessage(msg);
                     }
@@ -3809,7 +3892,7 @@
                 }
                 
                 // 处理恢复通知
-                if (msg.type === 'warning_resolved') {
+                if (msgType === 'warning_resolved') {
                     if (window.MessageCenter) {
                         window.MessageCenter.handleResolvedMessage(msg);
                     }
@@ -3817,7 +3900,7 @@
                 }
                 
                 // 处理定位数据
-                if (msg.type === 'location') {
+                if (msgType === 'location') {
                     handleLocationData(msg);
                     return;
                 }
@@ -3827,7 +3910,7 @@
                     console.log('⏸️ 正在加载历史数据，暂时跳过实时数据');
                     return;
                 }
-                if (msg.type === 'reading') addRow(msg.ts, msg.temp, msg.hum, msg.lux, msg.smoke, msg.pressure, msg.temp2, msg.rs_ro);
+                if (msgType === 'reading') addRow(msg.ts, msg.temp, msg.hum, msg.lux, msg.smoke, msg.pressure, msg.temp2, msg.rs_ro);
             } catch {
             }
         };
@@ -4362,6 +4445,28 @@
         });
     }
 
+    // BH1750 亮度传感器控制快捷入口
+    if (luxCard) {
+        luxCard.style.cursor = 'pointer';
+        luxCard.addEventListener('click', (e) => {
+            if (e?.target?.closest?.('.info-btn')) return;
+            if (typeof window.openOverlayBH1750 === 'function') {
+                window.openOverlayBH1750();
+            }
+        });
+    }
+
+    // BMP180 气压传感器控制快捷入口
+    if (pressureCard) {
+        pressureCard.style.cursor = 'pointer';
+        pressureCard.addEventListener('click', (e) => {
+            if (e?.target?.closest?.('.info-btn')) return;
+            if (typeof window.openOverlayBMP180 === 'function') {
+                window.openOverlayBMP180();
+            }
+        });
+    }
+
     qs('#zoomInFullSmoke')?.addEventListener('click', () => chartSMOKEFull?.zoom(1.2));
     qs('#zoomOutFullSmoke')?.addEventListener('click', () => chartSMOKEFull?.zoom(0.8));
     qs('#panLeftFullSmoke')?.addEventListener('click', () => chartSMOKEFull?.pan({x: 120}));
@@ -4442,9 +4547,6 @@
         initHelpModal();
         initAboutModal();
         initFunctionMenu();
-
-        // 检查首次访问并显示帮助
-        checkFirstVisit();
     });
 
     // 首次加载：不清空数据（因为本来就是空的）

@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+    <meta charset="UTF-8"/>
+    <link rel="manifest" href="/resource/manifest.json">
+    <link rel="icon" type="image/x-icon" href="/resource/favicon.ico">
+    <link rel="apple-touch-icon" href="/resource/favicon_192.png" sizes="192x192">
+    <link rel="icon" href="/resource/favicon_512.png" sizes="512x512">
+    <link rel="stylesheet" href="/static/common-styles.css?v=20250205">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate"/>
+    <meta http-equiv="Pragma" content="no-cache"/>
+    <meta http-equiv="Expires" content="0"/>
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="设备总览">
+    <meta name="application-name" content="设备总览">
+    <title>智能环境监测系统 - 设备总览</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <style>
+        :root {
+            --bg: #0b1020;
+            --card: #0f162e;
+            --bd: #1d2b4a;
+            --text: #e6eefc;
+            --muted: #9aa6bf;
+            --good: #22c55e;
+            --bad: #ef4444;
+            --warn: #f59e0b;
+            --primary: #3b82f6;
+            --radius: 16px;
+            --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+        }
+
+        @media (prefers-color-scheme: light) {
+            :root[data-theme="auto"] {
+                --bg: #f5f7fa;
+                --card: #fff;
+                --bd: #d6d9e0;
+                --text: #111827;
+                --muted: #64748b;
+                --good: #16a34a;
+                --bad: #dc2626;
+                --warn: #ea580c;
+                --primary: #2563eb;
+                --shadow: 0 8px 18px rgba(0, 0, 0, .08);
+            }
+        }
+
+        :root[data-theme="light"] {
+            --bg: #f5f7fa;
+            --card: #fff;
+            --bd: #d6d9e0;
+            --text: #111827;
+            --muted: #64748b;
+            --good: #16a34a;
+            --bad: #dc2626;
+            --warn: #ea580c;
+            --primary: #2563eb;
+            --shadow: 0 8px 18px rgba(0, 0, 0, .08);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+            letter-spacing: .2px;
+            transition: .3s;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 16px;
+                font-size: 14px;
+            }
+        }
+
+        .wrap {
+            max-width: 1300px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+            }
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h1 .logo {
+            height: 28px;
+            width: auto;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 20px;
+                justify-content: center;
+            }
+        }
+
+        .status {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        @media (max-width: 768px) {
+            .status {
+                justify-content: center;
+            }
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border: 1px solid var(--bd);
+            border-radius: 999px;
+            color: var(--muted);
+            background: var(--card);
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        .section-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .section-head h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .section-desc {
+            margin: 0;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .device-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .device-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            border: 1px solid color-mix(in srgb, var(--bd) 80%, transparent);
+            padding: 20px;
+            box-shadow: var(--shadow);
+            transition: all .2s ease;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            position: relative;
+            min-width: 0; /* 防止 grid 中的卡片被内容撑开 */
+            overflow: hidden; /* 防止内容溢出 */
+        }
+        
+        /* 卡片内容容器，确保内容在上层 */
+        .device-card > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .device-card:hover:not(.device-card-danger) {
+            border-color: color-mix(in srgb, var(--primary) 40%, var(--bd));
+            box-shadow: 0 14px 32px rgba(37, 99, 235, 0.26);
+            transform: translateY(-3px);
+        }
+
+        /* 危险状态：红色边框 */
+        .device-card-danger {
+            border: 3px solid var(--bad);
+            box-shadow: 
+                0 0 0 1px rgba(239, 68, 68, 0.4), 
+                0 0 25px rgba(239, 68, 68, 0.5),
+                var(--shadow);
+            animation: dangerPulse 1.5s ease-in-out infinite;
+        }
+        
+        /* 危险状态：红色跑马灯效果 */
+        .device-card-danger::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            border-radius: var(--radius);
+            padding: 3px;
+            background: linear-gradient(90deg, 
+                transparent 0%,
+                transparent 8%,
+                rgba(239, 68, 68, 0.5) 15%,
+                rgba(239, 68, 68, 1) 20%,
+                rgba(255, 100, 100, 1) 25%,
+                rgba(239, 68, 68, 1) 30%,
+                rgba(239, 68, 68, 0.5) 35%,
+                transparent 42%,
+                transparent 58%,
+                rgba(239, 68, 68, 0.5) 65%,
+                rgba(239, 68, 68, 1) 70%,
+                rgba(255, 100, 100, 1) 75%,
+                rgba(239, 68, 68, 1) 80%,
+                rgba(239, 68, 68, 0.5) 85%,
+                transparent 92%,
+                transparent 100%);
+            background-size: 200% 100%;
+            -webkit-mask-image: linear-gradient(#fff 0 0), linear-gradient(#fff 0 0);
+            -webkit-mask-clip: content-box, border-box;
+            -webkit-mask-composite: xor;
+            mask-image: linear-gradient(#fff 0 0), linear-gradient(#fff 0 0);
+            mask-clip: content-box, border-box;
+            mask-composite: exclude;
+            z-index: 0;
+            animation: dangerMarquee 1.2s linear infinite;
+            pointer-events: none;
+        }
+
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .device-name {
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .device-id {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .chip {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid color-mix(in srgb, var(--bd) 70%, transparent);
+            background: color-mix(in srgb, var(--card) 90%, transparent);
+            font-size: 12px;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+
+        .chip-online {
+            border-color: color-mix(in srgb, var(--good) 65%, transparent);
+            color: var(--good);
+            background: color-mix(in srgb, var(--good) 12%, transparent);
+        }
+
+        .chip-offline {
+            border-color: color-mix(in srgb, var(--bad) 65%, transparent);
+            color: var(--bad);
+            background: color-mix(in srgb, var(--bad) 12%, transparent);
+        }
+
+        .device-realtime {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .realtime-metric {
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid color-mix(in srgb, var(--bd) 70%, transparent);
+            background: color-mix(in srgb, var(--card) 96%, transparent);
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        .metric-value {
+            font-size: 20px;
+            font-weight: 700;
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+        }
+
+        .metric-unit {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .device-updated {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .device-alert {
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+            background: color-mix(in srgb, var(--card) 94%, transparent);
+            border: 1px dashed var(--bd);
+            color: var(--muted);
+        }
+
+        .device-card-danger .device-alert {
+            border-color: color-mix(in srgb, var(--bad) 70%, transparent);
+            background: color-mix(in srgb, var(--bad) 12%, transparent);
+            color: var(--bad);
+        }
+
+        /* 红色跑马灯动画（更快） */
+        @keyframes dangerMarquee {
+            0% {
+                background-position: 0% 0%;
+            }
+            100% {
+                background-position: 200% 0%;
+            }
+        }
+        
+        /* 危险状态脉冲动画 */
+        @keyframes dangerPulse {
+            0%, 100% {
+                box-shadow: 
+                    0 0 0 1px rgba(239, 68, 68, 0.4), 
+                    0 0 25px rgba(239, 68, 68, 0.5),
+                    var(--shadow);
+            }
+            50% {
+                box-shadow: 
+                    0 0 0 2px rgba(239, 68, 68, 0.6), 
+                    0 0 35px rgba(239, 68, 68, 0.7),
+                    var(--shadow);
+            }
+        }
+
+        .device-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .tag {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid color-mix(in srgb, var(--bd) 60%, transparent);
+            background: color-mix(in srgb, var(--card) 92%, transparent);
+            font-size: 12px;
+            max-width: 65%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .device-footer-cta {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .empty-tip {
+            padding: 30px;
+            text-align: center;
+            color: var(--muted);
+            border-radius: var(--radius);
+            border: 1px dashed var(--bd);
+            background: color-mix(in srgb, var(--card) 92%, transparent);
+        }
+
+        .device-select-content {
+            max-width: 420px;
+        }
+
+        .device-select-hint {
+            margin-bottom: 16px;
+            font-size: 14px;
+            color: var(--muted);
+        }
+
+        .device-select-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 320px;
+            overflow: auto;
+        }
+
+        .device-select-item {
+            border: 1px solid var(--bd);
+            border-radius: 12px;
+            padding: 12px;
+            background: color-mix(in srgb, var(--card) 96%, transparent);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: all .2s ease;
+            color: var(--text);
+        }
+
+        .device-select-item:hover {
+            border-color: var(--primary);
+            background: color-mix(in srgb, var(--primary) 12%, var(--card));
+        }
+
+        .device-select-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .device-select-name {
+            font-weight: 600;
+        }
+
+        .device-select-id {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .device-select-status {
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            border: 1px solid color-mix(in srgb, var(--bd) 70%, transparent);
+            background: color-mix(in srgb, var(--card) 92%, transparent);
+        }
+
+        /* 复用 index.html 的弹窗/遮罩样式，确保公共组件默认隐藏 */
+        .overlay {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, .35);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .22s ease;
+        }
+
+        .overlay.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal {
+            width: min(1200px, 92vw);
+            max-width: calc(100vw - 32px);
+            max-height: calc(100vh - 32px);
+            display: flex;
+            flex-direction: column;
+            background: var(--card);
+            border: 1px solid var(--bd);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            transform: translateY(8px) scale(.985);
+            transition: transform .25s ease;
+        }
+
+        .overlay.show .modal {
+            transform: translateY(0) scale(1);
+        }
+
+        .modal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--bd);
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        footer {
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 12px;
+            text-align: right;
+        }
+
+    </style>
+</head>
+<body>
+<!-- 启动画面（由 common.js 动态生成） -->
+<div class="wrap">
+    <header>
+        <h1>
+            <img src="/resource/logo.png" alt="logo" class="logo">
+            <span>智能环境监测系统</span>
+        </h1>
+        <div class="status">
+            <span class="badge">在线：<span id="onlineDeviceCount">0</span> 台 / 总设备：<span id="totalDeviceCount">0</span> 台</span>
+            <div class="menu-wrapper">
+                <div class="menu-btn" id="menuBtn">
+                    <span>⚙️ 功能</span>
+                    <span style="font-size: 10px; transition: transform .2s ease" id="menuArrow">▼</span>
+                    <span class="menu-btn-badge" id="menuBtnBadge"></span>
+                </div>
+                <div class="menu-dropdown" id="menuDropdown">
+                    <a href="/analysis.html" class="menu-item" title="查看数据统计分析">
+                        <span>📈</span>
+                        <span>数据分析</span>
+                        <span class="ai-inside-badge">AI</span>
+                    </a>
+                    <div class="menu-item" id="messageCenterBtn" title="查看警告消息中心">
+                        <span>🔔</span>
+                        <span>消息中心</span>
+                        <span class="message-badge" id="messageBadge" style="display: none;">0</span>
+                    </div>
+                    <div class="menu-item" id="powerControlEntry" data-power-control-trigger title="省电控制">
+                        <span>🔋</span>
+                        <span>省电控制</span>
+                    </div>
+                    <div class="menu-item" id="themeBtn" title="切换主题模式">
+                        <span>🌙</span>
+                        <span>主题切换</span>
+                    </div>
+                    <div class="menu-item" id="aboutBtn" title="关于项目">
+                        <span>ℹ️</span>
+                        <span>关于项目</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <section class="device-section">
+        <div id="devices-container">
+            <div class="empty-tip">正在加载设备列表...</div>
+        </div>
+    </section>
+
+    <footer>陈鹏旭 · 基于 STM32 和物联网的智能环境监测系统设计与实现 (<span data-latest-version>未知版本</span>)</footer>
+</div>
+
+<!-- 消息中心弹窗 -->
+<div id="messageCenterPanel" class="message-center-panel">
+    <div class="message-center-header">
+        <div class="message-center-title">
+            <span>🔔</span>
+            <span>消息中心</span>
+        </div>
+        <button class="message-center-close" onclick="closeMessageCenter()" title="关闭">×</button>
+    </div>
+    <div class="message-center-filters">
+        <div class="calendar-wrapper" id="calendarWrapper"></div>
+        <select id="warningTypeFilter" class="message-filter-select">
+            <option value="">全部类型</option>
+            <option value="T">温度</option>
+            <option value="H">湿度</option>
+            <option value="B">亮度</option>
+            <option value="S">PPM</option>
+            <option value="P">大气压</option>
+        </select>
+        <select id="warningStatusFilter" class="message-filter-select">
+            <option value="">全部状态</option>
+            <option value="0">未恢复</option>
+            <option value="1">已恢复</option>
+        </select>
+        <button class="message-refresh-btn" onclick="loadWarningMessages()" title="刷新">🔄</button>
+    </div>
+    <div class="message-center-body" id="messageCenterBody">
+        <div class="message-loading" id="messageLoading">加载中...</div>
+        <div class="message-empty" id="messageEmpty" style="display: none;">暂无警告消息</div>
+        <div class="message-list" id="messageList"></div>
+    </div>
+</div>
+
+<!-- 警告通知弹窗 -->
+<div id="warningNotification" class="warning-notification" style="display: none;">
+    <div class="warning-notification-content">
+        <div class="warning-notification-icon">⚠️</div>
+        <div class="warning-notification-text">
+            <div class="warning-notification-title" id="warningNotificationTitle"></div>
+            <div class="warning-notification-desc" id="warningNotificationDesc"></div>
+        </div>
+        <button class="warning-notification-close" onclick="closeWarningNotification()">×</button>
+    </div>
+</div>
+
+<!-- 设备选择弹窗 -->
+<div id="deviceSelectModal" class="confirm-modal" aria-hidden="true">
+    <div class="confirm-content device-select-content" role="dialog" aria-modal="true" aria-labelledby="deviceSelectTitle">
+        <div class="confirm-icon">📟</div>
+        <div class="confirm-title" id="deviceSelectTitle">选择设备</div>
+        <div class="device-select-hint" id="deviceSelectHint">请选择要进行操作的目标设备</div>
+        <div class="device-select-list" id="deviceSelectList"></div>
+        <div class="confirm-actions">
+            <button class="confirm-btn confirm-btn-cancel" data-device-select-cancel>取消</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/changelog-data.js?v=20250205"></script>
+<script src="/static/common.js?v=20250205"></script>
+<script>
+(() => {
+    const container = document.getElementById('devices-container');
+    const onlineDeviceCountEl = document.getElementById('onlineDeviceCount');
+    const totalDeviceCountEl = document.getElementById('totalDeviceCount');
+    const DEVICE_STORAGE_KEY = 'device_overview_selected';
+    const deviceSelectModal = document.getElementById('deviceSelectModal');
+    const deviceSelectList = document.getElementById('deviceSelectList');
+    const deviceSelectHint = document.getElementById('deviceSelectHint');
+    let devicePickerResolver = null;
+    let devicesCache = [];
+    let ws = null;
+    let wsReconnectTimer = null;
+    const realtimeMap = new Map();
+    const warningMap = new Map();
+    const deviceLastSeenMap = new Map(); // 记录每个设备最后收到数据的时间戳（秒）
+    const DEVICE_OFFLINE_TIMEOUT = 10; // 设备离线超时时间（秒），10秒内没有收到数据则认为离线（约两个数据包间隔）
+    let deviceStatusCheckInterval = null; // 设备状态检查定时器
+    let requireDeviceSelection = true;
+
+    function normalizeDeviceId(id) {
+        if (!id) return '';
+        return String(id).trim().toUpperCase();
+    }
+
+    function applySelectedDevice(deviceId) {
+        const normalized = normalizeDeviceId(deviceId);
+        if (!normalized) return;
+        window.selectedDeviceId = normalized;
+        localStorage.setItem(DEVICE_STORAGE_KEY, normalized);
+        requireDeviceSelection = false;
+    }
+
+    function formatNumber(value, digits = 1) {
+        if (typeof value !== 'number' || Number.isNaN(value)) {
+            return '--';
+        }
+        return value.toFixed(digits);
+    }
+
+    function formatTime(ts) {
+        if (!ts) return '--';
+        const date = new Date(ts * 1000);
+        if (Number.isNaN(date.getTime())) return '--';
+        return date.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    }
+
+    function getStatusBadge(online, viaList) {
+        const viaText = viaList && viaList.length ? viaList.join(' / ') : '未知链路';
+        if (online) {
+            return `<span class="chip chip-online">在线 · ${viaText}</span>`;
+        }
+        return `<span class="chip chip-offline">离线 · ${viaText}</span>`;
+    }
+
+    /**
+     * 根据最后收到数据的时间判断设备是否在线
+     * @param {string} deviceId - 设备ID
+     * @param {boolean} fallbackOnline - 此参数已废弃，不再使用后端返回的状态作为初始值
+     * @returns {boolean} 设备是否在线
+     */
+    function isDeviceOnline(deviceId, fallbackOnline = false) {
+        const normalizedId = normalizeDeviceId(deviceId);
+        if (!normalizedId) return false;
+        
+        const lastSeen = deviceLastSeenMap.get(normalizedId);
+        if (!lastSeen) {
+            // 从未收到过 WebSocket 数据，无法确定设备是否在线，返回离线
+            // 只有收到第一个数据包后，才会标记为在线
+            return false;
+        }
+        
+        const now = Date.now() / 1000; // 当前时间戳（秒）
+        const timeSinceLastSeen = now - lastSeen;
+        
+        return timeSinceLastSeen <= DEVICE_OFFLINE_TIMEOUT;
+    }
+
+    /**
+     * 更新设备最后活跃时间
+     */
+    function updateDeviceLastSeen(deviceId) {
+        const normalizedId = normalizeDeviceId(deviceId);
+        if (!normalizedId) return;
+        deviceLastSeenMap.set(normalizedId, Date.now() / 1000);
+    }
+
+    /**
+     * 更新单个设备的状态显示
+     */
+    function updateDeviceStatusDisplay(deviceId) {
+        const normalizedId = normalizeDeviceId(deviceId);
+        if (!normalizedId) return;
+        
+        const deviceCard = container.querySelector(`[data-id="${normalizedId}"]`);
+        if (!deviceCard) return;
+        
+        const statusBadgeEl = deviceCard.querySelector('.chip');
+        if (!statusBadgeEl) return;
+        
+        // 从设备缓存中获取设备信息
+        const device = devicesCache.find(d => normalizeDeviceId(d.id || d.device_id) === normalizedId);
+        if (!device) return;
+        
+        const transports = [];
+        if (device.has_ble) transports.push('BLE');
+        if (device.has_mqtt) transports.push('MQTT');
+        const viaList = device.via || transports;
+        const viaText = viaList && viaList.length ? viaList.join(' / ') : '未知链路';
+        
+        // 使用实时推断的在线状态，只有收到过 WebSocket 数据才能判断是否在线
+        const isOnline = isDeviceOnline(normalizedId);
+        statusBadgeEl.className = isOnline ? 'chip chip-online' : 'chip chip-offline';
+        statusBadgeEl.textContent = isOnline ? `在线 · ${viaText}` : `离线 · ${viaText}`;
+    }
+
+    /**
+     * 检查所有设备的状态并更新显示
+     */
+    function updateDeviceCounts() {
+        if (!devicesCache || !devicesCache.length) {
+            if (onlineDeviceCountEl) onlineDeviceCountEl.textContent = '0';
+            if (totalDeviceCountEl) totalDeviceCountEl.textContent = '0';
+            return;
+        }
+        
+        // 统计在线设备数量
+        let onlineCount = 0;
+        devicesCache.forEach((dev) => {
+            const deviceId = normalizeDeviceId(dev.id || dev.device_id || '');
+            if (isDeviceOnline(deviceId)) {
+                onlineCount++;
+            }
+        });
+        
+        // 更新显示
+        if (onlineDeviceCountEl) onlineDeviceCountEl.textContent = onlineCount;
+        if (totalDeviceCountEl) totalDeviceCountEl.textContent = devicesCache.length;
+    }
+
+    function checkAllDevicesStatus() {
+        devicesCache.forEach(device => {
+            const deviceId = normalizeDeviceId(device.id || device.device_id);
+            if (deviceId) {
+                updateDeviceStatusDisplay(deviceId);
+                // 同时更新警告显示，确保离线设备不会显示"运行状态良好"
+                updateWarningDisplay(deviceId);
+            }
+        });
+        // 更新设备数量统计
+        updateDeviceCounts();
+    }
+
+    function renderDevices(devices) {
+        if (!devices || !devices.length) {
+            container.innerHTML = '<div class="empty-tip">当前没有已配置的设备。</div>';
+            if (onlineDeviceCountEl) onlineDeviceCountEl.textContent = '0';
+            if (totalDeviceCountEl) totalDeviceCountEl.textContent = '0';
+            return;
+        }
+        
+        // 更新设备数量统计
+        updateDeviceCounts();
+        
+        const cards = devices.map((dev) => {
+            const deviceId = normalizeDeviceId(dev.id || dev.device_id || '');
+            const transports = [];
+            if (dev.has_ble) transports.push('BLE');
+            if (dev.has_mqtt) transports.push('MQTT');
+            // 使用实时推断的在线状态，只有收到过 WebSocket 数据才能判断是否在线
+            const isOnline = isDeviceOnline(deviceId);
+            const statusBadge = getStatusBadge(isOnline, dev.via || transports);
+            const desc = dev.description || (transports.length ? `链路：${transports.join('/')}` : '智能环境监测终端');
+            return `
+                <div class="device-card" data-id="${deviceId}">
+                    <div class="device-header">
+                        <div>
+                            <div class="device-name">${dev.name || ('设备 ' + deviceId)}</div>
+                            <div class="device-id">ID: ${deviceId}</div>
+                        </div>
+                        ${statusBadge}
+                    </div>
+                    <div class="device-realtime">
+                        <div class="realtime-metric">
+                            <div class="metric-label">实时温度</div>
+                            <div class="metric-value" data-device-field="temp" data-device-id="${deviceId}">
+                                <span>--</span><span class="metric-unit">°C</span>
+                            </div>
+                        </div>
+                        <div class="realtime-metric">
+                            <div class="metric-label">实时湿度</div>
+                            <div class="metric-value" data-device-field="hum" data-device-id="${deviceId}">
+                                <span>--</span><span class="metric-unit">%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="device-updated" data-device-field="updated" data-device-id="${deviceId}">最近更新时间：--</div>
+                    <div class="device-alert" data-device-field="alert" data-device-id="${deviceId}">等待实时数据...</div>
+                    <div class="device-footer">
+                        <div class="device-footer-cta">
+                            <span>查看实时数据</span>
+                            <span>➜</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        container.innerHTML = `<div class="device-grid">${cards}</div>`;
+
+        container.querySelectorAll('.device-card').forEach((card) => {
+            card.addEventListener('click', () => {
+                const id = card.getAttribute('data-id');
+                if (id) {
+                    applySelectedDevice(id);
+                    window.location.href = `/realtime.html?device_id=${encodeURIComponent(id)}`;
+                }
+            });
+        });
+
+        devices.forEach((dev) => {
+            const deviceId = normalizeDeviceId(dev.id || dev.device_id || '');
+            updateRealtimeDisplay(deviceId);
+            updateWarningDisplay(deviceId);
+        });
+        updateDevicePicker();
+    }
+
+    function updateRealtimeDisplay(deviceId) {
+        if (!deviceId) return;
+        const realtime = realtimeMap.get(deviceId);
+        const tempEl = document.querySelector(`[data-device-field="temp"][data-device-id="${deviceId}"] span:first-child`);
+        const humEl = document.querySelector(`[data-device-field="hum"][data-device-id="${deviceId}"] span:first-child`);
+
+        const updatedEl = document.querySelector(`[data-device-field="updated"][data-device-id="${deviceId}"]`);
+        let tempValue = null;
+        if (realtime) {
+            if (typeof realtime.temp === 'number' && !Number.isNaN(realtime.temp)) {
+                tempValue = realtime.temp;
+            } else if (typeof realtime.temp2 === 'number' && !Number.isNaN(realtime.temp2)) {
+                tempValue = realtime.temp2;
+            }
+        }
+        if (tempEl) {
+            tempEl.textContent = tempValue === null ? '--' : formatNumber(tempValue, 1);
+        }
+        const humValue = realtime && typeof realtime.hum === 'number' && !Number.isNaN(realtime.hum)
+            ? realtime.hum
+            : null;
+        if (humEl) {
+            humEl.textContent = humValue === null ? '--' : formatNumber(humValue, 1);
+        }
+        if (updatedEl) {
+            updatedEl.textContent = realtime && realtime.ts ? `最近更新时间：${formatTime(realtime.ts)}` : '最近更新时间：--';
+        }
+    }
+
+    function updateWarningDisplay(deviceId) {
+        if (!deviceId) return;
+        const alertEl = document.querySelector(`[data-device-field="alert"][data-device-id="${deviceId}"]`);
+        const cardEl = document.querySelector(`.device-card[data-id="${deviceId}"]`);
+        const warning = warningMap.get(deviceId);
+        if (!alertEl) return;
+        
+        // 检查设备是否在线
+        const normalizedId = normalizeDeviceId(deviceId);
+        const isOnline = isDeviceOnline(normalizedId);
+        
+        if (warning) {
+            let warningValueText = '--';
+            if (typeof warning.warning_value === 'number' && !Number.isNaN(warning.warning_value)) {
+                warningValueText = warning.warning_value;
+            } else if (typeof warning.warning_value === 'string' && warning.warning_value.trim() !== '') {
+                warningValueText = warning.warning_value;
+            }
+            const warningUnit = warning.warning_unit || '';
+            alertEl.textContent = `⚠️ ${warning.warning_name || '危险'} · ${warningValueText}${warningUnit}`;
+            if (cardEl) {
+                cardEl.classList.add('device-card-danger');
+            }
+        } else {
+            // 没有警告时，根据设备在线状态显示不同信息
+            if (isOnline) {
+                alertEl.textContent = '运行状态良好';
+            } else {
+                alertEl.textContent = '等待实时数据...';
+            }
+            if (cardEl) {
+                cardEl.classList.remove('device-card-danger');
+            }
+        }
+    }
+
+    async function loadDevices() {
+        try {
+            const res = await fetch('/api/devices');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error || '获取设备列表失败');
+            devicesCache = (data.devices || []).map((d) => ({
+                ...d,
+                id: normalizeDeviceId(d.id || d.device_id || '')
+            }));
+            
+            // 不再根据后端返回的状态设置初始时间戳
+            // 只有收到第一个 WebSocket 数据包后，才会标记设备为在线
+            
+            renderDevices(devicesCache);
+            // 渲染后立即检查一次所有设备状态
+            checkAllDevicesStatus();
+        } catch (error) {
+            console.error('加载设备列表失败：', error);
+            container.innerHTML = `<div class="empty-tip">加载设备列表失败：${error.message || error}</div>`;
+            if (onlineDeviceCountEl) onlineDeviceCountEl.textContent = '0';
+            if (totalDeviceCountEl) totalDeviceCountEl.textContent = '0';
+        }
+    }
+
+    function handleReadingMessage(payload) {
+        const deviceId = normalizeDeviceId(payload.device_id || 'D01');
+        // 更新设备最后活跃时间
+        updateDeviceLastSeen(deviceId);
+        realtimeMap.set(deviceId, {
+            temp: typeof payload.temp === 'number' ? payload.temp : null,
+            hum: typeof payload.hum === 'number' ? payload.hum : null,
+            ts: payload.ts || Date.now() / 1000
+        });
+        updateRealtimeDisplay(deviceId);
+        // 更新设备状态显示
+        updateDeviceStatusDisplay(deviceId);
+    }
+
+    function handleWarningMessage(payload) {
+        const deviceId = normalizeDeviceId(payload.device_id || 'D01');
+        // 警告消息也说明设备在线
+        updateDeviceLastSeen(deviceId);
+        warningMap.set(deviceId, payload);
+        updateWarningDisplay(deviceId);
+        // 更新设备状态显示
+        updateDeviceStatusDisplay(deviceId);
+        if (window.MessageCenter) {
+            window.MessageCenter.handleWarningMessage(payload);
+        }
+    }
+
+    function handleResolvedMessage(payload) {
+        const deviceId = normalizeDeviceId(payload.device_id || 'D01');
+        // 恢复消息也说明设备在线
+        updateDeviceLastSeen(deviceId);
+        warningMap.delete(deviceId);
+        updateWarningDisplay(deviceId);
+        // 更新设备状态显示
+        updateDeviceStatusDisplay(deviceId);
+        if (window.MessageCenter) {
+            window.MessageCenter.handleResolvedMessage(payload);
+        }
+    }
+
+    function connectWebSocket() {
+        if (ws) {
+            try {
+                ws.close();
+            } catch (e) {
+                console.warn('关闭旧 WebSocket 失败：', e);
+            }
+        }
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        ws = new WebSocket(`${protocol}${window.location.host}/ws`);
+        ws.onopen = () => console.log('✅ devices.html WebSocket 已连接');
+        ws.onclose = () => {
+            console.warn('⚠️ devices.html WebSocket 已断开，准备重连');
+            ws = null;
+            if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = setTimeout(connectWebSocket, 2000);
+        };
+        ws.onmessage = (event) => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (!payload || !payload.type) return;
+                switch (payload.type) {
+                    case 'reading':
+                        handleReadingMessage(payload);
+                        break;
+                    case 'warning':
+                        handleWarningMessage(payload);
+                        break;
+                    case 'warning_resolved':
+                        handleResolvedMessage(payload);
+                        break;
+                    default:
+                        break;
+                }
+            } catch (error) {
+                console.error('解析 WebSocket 消息失败：', error);
+            }
+        };
+    }
+
+    function updateDevicePicker(selectedDeviceId = null) {
+        if (!deviceSelectList) return;
+        // 不自动使用window.selectedDeviceId，避免默认选中某个设备
+        // 只有在明确传递selectedDeviceId时才使用
+        const selected = selectedDeviceId ? normalizeDeviceId(selectedDeviceId) : '';
+        if (!devicesCache.length) {
+            deviceSelectList.innerHTML = '<div class="empty-tip" style="margin:0;">暂无可选设备</div>';
+            return;
+        }
+        deviceSelectList.innerHTML = devicesCache.map((dev) => {
+            // 确保dev.id也是大写格式进行比较，避免错误匹配
+            const devId = normalizeDeviceId(dev.id);
+            const isActive = selected && devId && selected === devId;
+            const status = dev.online ? '在线' : '离线';
+            return `
+                <button type="button" class="device-select-item ${isActive ? 'active' : ''}" data-device-id="${dev.id}">
+                    <div class="device-select-meta">
+                        <span class="device-select-name">${dev.name || ('设备 ' + dev.id)}</span>
+                        <span class="device-select-id">ID: ${dev.id}</span>
+                    </div>
+                    <span class="device-select-status">${status}</span>
+                </button>
+            `;
+        }).join('');
+    }
+
+    function openDevicePicker(hintText) {
+        if (!devicesCache.length) {
+            if (typeof window.showNotification === 'function') {
+                window.showNotification('暂无可选设备', true);
+            }
+            return Promise.resolve(null);
+        }
+        deviceSelectHint.textContent = hintText || '请选择要操作的设备';
+        // 不传递selectedDeviceId，避免默认选中某个设备
+        updateDevicePicker(null);
+        deviceSelectModal.classList.add('show');
+        deviceSelectModal.setAttribute('aria-hidden', 'false');
+        return new Promise((resolve) => {
+            devicePickerResolver = resolve;
+        });
+    }
+
+    function closeDevicePicker(result = null) {
+        deviceSelectModal.classList.remove('show');
+        deviceSelectModal.setAttribute('aria-hidden', 'true');
+        if (devicePickerResolver) {
+            devicePickerResolver(result);
+            devicePickerResolver = null;
+        }
+    }
+
+    if (deviceSelectList) {
+        deviceSelectList.addEventListener('click', (event) => {
+            event.stopPropagation(); // 阻止事件冒泡
+            const item = event.target.closest('.device-select-item');
+            if (!item) return;
+            const deviceId = item.getAttribute('data-device-id');
+            closeDevicePicker(deviceId || null);
+        });
+    }
+
+    const deviceSelectCancelBtn = document.querySelector('[data-device-select-cancel]');
+    if (deviceSelectCancelBtn) {
+        deviceSelectCancelBtn.addEventListener('click', (event) => {
+            event.stopPropagation(); // 阻止事件冒泡
+            closeDevicePicker(null);
+        });
+    }
+    if (deviceSelectModal) {
+        deviceSelectModal.addEventListener('click', (event) => {
+            event.stopPropagation(); // 阻止事件冒泡到文档
+            if (event.target === deviceSelectModal) closeDevicePicker(null);
+        });
+        // 阻止弹窗内容区域的点击事件冒泡
+        const deviceSelectContent = deviceSelectModal.querySelector('.confirm-content');
+        if (deviceSelectContent) {
+            deviceSelectContent.addEventListener('click', (event) => {
+                event.stopPropagation();
+            });
+        }
+    }
+
+    function guardAction(button, hintText, afterReady) {
+        if (!button) return;
+        const handler = async (event) => {
+            if (!requireDeviceSelection && window.selectedDeviceId) {
+                button.removeEventListener('click', handler, true);
+                return;
+            }
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            const deviceId = await openDevicePicker(hintText);
+            if (!deviceId) return;
+            applySelectedDevice(deviceId);
+            button.removeEventListener('click', handler, true);
+            if (typeof afterReady === 'function') {
+                afterReady(deviceId);
+            } else {
+                setTimeout(() => button.click(), 0);
+            }
+        };
+        button.addEventListener('click', handler, true);
+    }
+
+    function setupMessageCenterSelection() {
+        const messageBtn = document.getElementById('messageCenterBtn');
+        let pendingMessageCenterDeviceId = null;
+
+        window.setPendingMessageCenterDevice = function (deviceId) {
+            pendingMessageCenterDeviceId = deviceId ? String(deviceId).trim().toUpperCase() : null;
+        };
+
+        if (window.MessageCenter && typeof window.MessageCenter.setBeforeOpenHook === 'function') {
+            window.MessageCenter.setBeforeOpenHook(() => {
+                if (pendingMessageCenterDeviceId) {
+                    const deviceId = pendingMessageCenterDeviceId;
+                    pendingMessageCenterDeviceId = null;
+                    applySelectedDevice(deviceId);
+                    return deviceId;
+                }
+                // 不返回window.selectedDeviceId，避免默认选中某个设备
+                return null;
+            });
+        }
+
+        if (messageBtn) {
+            messageBtn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                
+                // 先关闭菜单（如果打开的话）
+                const menuDropdown = document.querySelector('.menu-dropdown');
+                const menuBtn = document.querySelector('.menu-btn');
+                const menuArrow = document.querySelector('.menu-arrow');
+                if (menuDropdown && menuDropdown.classList.contains('show')) {
+                    menuDropdown.classList.remove('show');
+                    if (menuBtn) menuBtn.classList.remove('active');
+                    if (menuArrow) menuArrow.style.transform = 'rotate(0deg)';
+                }
+                
+                // 不传递selectedDeviceId，避免默认选中某个设备
+                const deviceId = await openDevicePicker('请选择要查看消息的设备');
+                if (!deviceId) return;
+                
+                applySelectedDevice(deviceId);
+                if (typeof window.setPendingMessageCenterDevice === 'function') {
+                    window.setPendingMessageCenterDevice(deviceId);
+                } else {
+                    pendingMessageCenterDeviceId = deviceId;
+                }
+                
+                // 延迟一下确保弹窗完全关闭
+                setTimeout(() => {
+                    if (window.MessageCenter && typeof window.MessageCenter.open === 'function') {
+                        window.MessageCenter.open();
+                    }
+                }, 100);
+            }, true);
+        }
+    }
+
+    function setupActionGuards() {
+        const powerBtn = document.getElementById('powerControlEntry');
+        if (!powerBtn) return;
+        
+        // 移除原有的 data-power-control-trigger 绑定，使用自定义处理
+        powerBtn.removeAttribute('data-power-control-trigger');
+        
+        // 先移除可能已经绑定的事件监听器（通过克隆节点的方式）
+        const newPowerBtn = powerBtn.cloneNode(true);
+        powerBtn.parentNode.replaceChild(newPowerBtn, powerBtn);
+        const actualPowerBtn = document.getElementById('powerControlEntry');
+        
+        // 绑定自定义点击事件（使用 capture 阶段，确保优先执行）
+        actualPowerBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation(); // 阻止其他事件处理器执行
+            
+            // 先弹出设备选择器
+            const deviceId = await openDevicePicker('请选择要控制的设备');
+            if (!deviceId) return; // 用户取消选择
+            
+            // 应用选择的设备ID
+            applySelectedDevice(deviceId);
+            
+            // 打开省电控制中心，传递已选择的设备ID
+            if (window.PowerControlModal && typeof window.PowerControlModal.open === 'function') {
+                await window.PowerControlModal.open(deviceId);
+            } else {
+                console.error('PowerControlModal 未初始化');
+            }
+        }, true); // 使用 capture 阶段
+    }
+
+    function initSharedUI() {
+        if (typeof window.setupThemeToggle === 'function') {
+            window.setupThemeToggle('themeBtn');
+        }
+        if (typeof window.initFunctionMenu === 'function') {
+            window.initFunctionMenu();
+        }
+        if (typeof window.initAboutModal === 'function') {
+            window.initAboutModal();
+        }
+        if (typeof window.initHelpModal === 'function') {
+            window.initHelpModal();
+        }
+        if (window.MessageCenter) {
+            window.MessageCenter.init();
+        }
+        setupMessageCenterSelection();
+        setupActionGuards();
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const saved = localStorage.getItem(DEVICE_STORAGE_KEY);
+        if (saved) {
+            const normalizedSaved = normalizeDeviceId(saved);
+            if (normalizedSaved) {
+                window.selectedDeviceId = normalizedSaved;
+                requireDeviceSelection = false;
+            } else {
+                window.selectedDeviceId = null;
+                requireDeviceSelection = true;
+            }
+        } else {
+            window.selectedDeviceId = null;
+            requireDeviceSelection = true;
+        }
+        initSharedUI();
+        loadDevices();
+        setInterval(loadDevices, 8000);
+        connectWebSocket();
+        // 启动设备状态检查定时器，每5秒检查一次设备是否离线
+        deviceStatusCheckInterval = setInterval(checkAllDevicesStatus, 5000);
+        
+        // 检查首次访问并显示帮助（首页是devices.html）
+        if (typeof window.checkFirstVisit === 'function') {
+            window.checkFirstVisit();
+        }
+        
+        // 页面卸载时清理定时器
+        window.addEventListener('beforeunload', () => {
+            if (deviceStatusCheckInterval) {
+                clearInterval(deviceStatusCheckInterval);
+                deviceStatusCheckInterval = null;
+            }
+            if (wsReconnectTimer) {
+                clearTimeout(wsReconnectTimer);
+                wsReconnectTimer = null;
+            }
+            if (ws) {
+                try {
+                    ws.close();
+                } catch (e) {
+                    // 忽略关闭错误
+                }
+            }
+        });
+    });
+})();
+</script>
+</body>
+</html>
+

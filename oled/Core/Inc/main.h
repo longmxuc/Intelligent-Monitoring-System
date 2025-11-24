@@ -57,10 +57,22 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define BH1750_POWER_Pin GPIO_PIN_5
+#define BH1750_POWER_GPIO_Port GPIOA
+#define BPM180_POWER_Pin GPIO_PIN_6
+#define BPM180_POWER_GPIO_Port GPIOA
+#define BLE_POWER_Pin GPIO_PIN_7
+#define BLE_POWER_GPIO_Port GPIOA
+#define OLED_POWER_Pin GPIO_PIN_0
+#define OLED_POWER_GPIO_Port GPIOB
 #define MQ2_POWER_Pin GPIO_PIN_1
 #define MQ2_POWER_GPIO_Port GPIOB
 #define SWITCH_KEY_Pin GPIO_PIN_12
 #define SWITCH_KEY_GPIO_Port GPIOB
+#define OLED_KEY_Pin GPIO_PIN_13
+#define OLED_KEY_GPIO_Port GPIOB
+#define STATE_KEY_Pin GPIO_PIN_14
+#define STATE_KEY_GPIO_Port GPIOB
 #define BLE_STATE_Pin GPIO_PIN_8
 #define BLE_STATE_GPIO_Port GPIOA
 

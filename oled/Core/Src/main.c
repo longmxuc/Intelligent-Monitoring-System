@@ -36,6 +36,7 @@
 #include "bh1750.h"
 #include "mq2.h"
 #include "bmp180.h"
+#include "status_page.h"
 #include "stdio.h"
 /* USER CODE END Includes */
 
@@ -67,6 +68,12 @@ uint8_t receiveData[50];
 static uint8_t usart2_rx_byte = 0;
 static char usart2_cmd_buf[50];
 static uint8_t usart2_cmd_len = 0;
+static volatile uint8_t oledPowerCut = 0; // 0=上电,1=断电
+static volatile uint8_t oledNeedReinit = 0; // 需要重新初始化OLED
+static volatile uint8_t oledPendingPowerOff = 0; // 待断电标志（由中断设置，主循环处理）
+static volatile uint8_t bh1750PowerDown = 0; // 0=正常工作,1=PowerDown模式（低功耗）
+static volatile uint8_t bmp180Disabled = 0; // 0=正常工作,1=停止工作（不关闭电源，避免影响I2C总线）
+static volatile uint8_t blePowerCut = 0; // 0=上电,1=断电
 
 /* USER CODE END PV */
 
@@ -122,17 +129,59 @@ typedef struct
     uint8_t alertSent; // 是否已发送警告：0=未发送，1=已发送
 } AlertStatus_t;
 
-// 处理MQ2电源控制命令（来自串口2或串口3）
-static void ProcessMQ2PowerCommand(const char* text)
+// 处理多模块电源控制命令（来自串口2或串口3）
+static void ProcessPeripheralPowerCommand(const char* text)
 {
     if (text == NULL) return;
     if (strstr(text, "OFFMQ2") != NULL)
     {
         HAL_GPIO_WritePin(MQ2_POWER_GPIO_Port, MQ2_POWER_Pin, GPIO_PIN_RESET);
     }
-    else if (strstr(text, "ONMQ2") != NULL)
+    if (strstr(text, "ONMQ2") != NULL)
     {
         HAL_GPIO_WritePin(MQ2_POWER_GPIO_Port, MQ2_POWER_Pin, GPIO_PIN_SET);
+    }
+    if (strstr(text, "OFFBH1750") != NULL)
+    {
+        // 只发送PowerDown命令，不关闭电源，避免影响I2C总线
+        bh1750PowerDown = 1;
+    }
+    if (strstr(text, "ONBH1750") != NULL)
+    {
+        // 退出PowerDown模式，恢复正常工作
+        bh1750PowerDown = 0;
+    }
+    if (strstr(text, "OFFBPM180") != NULL)
+    {
+        // 不关闭电源，只停止读取操作，避免影响I2C总线
+        bmp180Disabled = 1;
+    }
+    if (strstr(text, "ONBPM180") != NULL)
+    {
+        // 恢复正常工作
+        bmp180Disabled = 0;
+    }
+    if (strstr(text, "OFFOLED") != NULL)
+    {
+        // 只设置待断电标志，不直接断电，让主循环安全地处理断电
+        // 这样可以避免在I2C通信过程中突然断电导致死机
+        oledPendingPowerOff = 1;
+    }
+    if (strstr(text, "ONOLED") != NULL)
+    {
+        HAL_GPIO_WritePin(OLED_POWER_GPIO_Port, OLED_POWER_Pin, GPIO_PIN_SET);
+        oledPowerCut = 0;
+        oledNeedReinit = 1;
+    }
+    if (strstr(text, "OFFBLE") != NULL)
+    {
+        HAL_GPIO_WritePin(BLE_POWER_GPIO_Port, BLE_POWER_Pin, GPIO_PIN_RESET);
+        blePowerCut = 1; // 记录蓝牙已断电
+    }
+    if (strstr(text, "ONBLE") != NULL)
+    {
+        HAL_GPIO_WritePin(BLE_POWER_GPIO_Port, BLE_POWER_Pin, GPIO_PIN_SET);
+        blePowerCut = 0; // 记录蓝牙已上电
     }
 }
 
@@ -148,7 +197,18 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
         {
             memcpy(buf, receiveData, n);
             buf[n] = '\0';
-            ProcessMQ2PowerCommand(buf);
+            
+            // 检查是否是状态消息（以"ms:"开头）
+            if (strncmp(buf, "ms:", 3) == 0)
+            {
+                // 解析状态消息
+                StatusPage_ParseMessage(buf);
+            }
+            else
+            {
+                // 处理其他命令
+                ProcessPeripheralPowerCommand(buf);
+            }
             // HAL_UART_Transmit_DMA(&huart3, (uint8_t*)buf, n);
         }
         // 开启下一次接收
@@ -158,30 +218,105 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
 }
 
 // 串口普通接收完成回调（用于USART2逐字节接收）
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
 {
     if (huart == &huart2)
     {
         uint8_t ch = usart2_rx_byte;
-        if (ch == '\n' || ch == '\r' || ch == ' ')
+        if (ch == '\n' || ch == '\r')
         {
             if (usart2_cmd_len > 0)
             {
                 usart2_cmd_buf[usart2_cmd_len] = '\0';
-                ProcessMQ2PowerCommand(usart2_cmd_buf);
+                
+                // 检查是否是状态消息（以"ms:"开头）
+                if (strncmp(usart2_cmd_buf, "ms:", 3) == 0)
+                {
+                    // 解析状态消息
+                    StatusPage_ParseMessage(usart2_cmd_buf);
+                }
+                else
+                {
+                    // 处理其他命令
+                    ProcessPeripheralPowerCommand(usart2_cmd_buf);
+                }
+                usart2_cmd_len = 0;
+            }
+        }
+        else if (ch == ' ')
+        {
+            // 空格作为分隔符，处理命令（保持原有逻辑）
+            if (usart2_cmd_len > 0)
+            {
+                usart2_cmd_buf[usart2_cmd_len] = '\0';
+                // 只处理非状态消息的命令（状态消息应该以换行符结束）
+                if (strncmp(usart2_cmd_buf, "ms:", 3) != 0)
+                {
+                    ProcessPeripheralPowerCommand(usart2_cmd_buf);
+                }
                 usart2_cmd_len = 0;
             }
         }
         else
         {
+            // 如果接收到命令开始字符（'O'表示OFF/ON命令，'m'表示状态消息），且缓冲区不为空
+            // 检查是否是新的命令开始，如果是则清空旧数据
+            if (usart2_cmd_len > 0)
+            {
+                // 如果缓冲区中是状态消息，但接收到的是命令字符（'O'），清空缓冲区
+                if (strncmp(usart2_cmd_buf, "ms:", 3) == 0 && (ch == 'O' || ch == 'o'))
+                {
+                    usart2_cmd_len = 0;  // 清空状态消息数据，准备接收新命令
+                }
+                // 如果缓冲区中不是状态消息，但接收到的是状态消息开始字符（'m'），清空缓冲区
+                else if (strncmp(usart2_cmd_buf, "ms:", 3) != 0 && ch == 'm')
+                {
+                    usart2_cmd_len = 0;  // 清空旧数据，准备接收新消息
+                }
+            }
+            
             if (usart2_cmd_len < sizeof(usart2_cmd_buf) - 1)
             {
                 usart2_cmd_buf[usart2_cmd_len++] = (char)ch;
                 usart2_cmd_buf[usart2_cmd_len] = '\0';
-                // 即时检查关键词（无分隔也能识别）
-                if (strstr(usart2_cmd_buf, "OFFMQ2") || strstr(usart2_cmd_buf, "ONMQ2"))
+                
+                // 检查是否是状态消息（以"ms:"开头）
+                // 状态消息格式：ms:t_HH:MM:SS,p_N（最小长度约18字符，如：ms:t_17:31:31,p_2）
+                // 当接收到足够字符（至少18个）且包含",p_"时，尝试解析
+                if (strncmp(usart2_cmd_buf, "ms:", 3) == 0 && usart2_cmd_len >= 18)
                 {
-                    ProcessMQ2PowerCommand(usart2_cmd_buf);
+                    // 检查是否包含完整的状态消息格式（包含",p_"）
+                    if (strstr(usart2_cmd_buf, ",p_") != NULL)
+                    {
+                        // 尝试解析状态消息
+                        if (StatusPage_ParseMessage(usart2_cmd_buf))
+                        {
+                            // 解析成功，清空缓冲区
+                            usart2_cmd_len = 0;
+                        }
+                        // 如果解析失败，继续接收（可能数据还没完整）
+                        // 但如果数据长度已经很长（超过30），可能是格式错误，清空缓冲区
+                        else if (usart2_cmd_len >= 30)
+                        {
+                            usart2_cmd_len = 0;  // 防止缓冲区溢出
+                        }
+                    }
+                    // 如果数据长度超过30但还没找到",p_"，可能是格式错误，清空缓冲区
+                    else if (usart2_cmd_len >= 30)
+                    {
+                        usart2_cmd_len = 0;  // 防止缓冲区溢出
+                    }
+                }
+                // 即时检查关键词（无分隔也能识别）
+                // 注意：只有在不是状态消息的情况下才检查这些关键词
+                else if (strncmp(usart2_cmd_buf, "ms:", 3) != 0 && 
+                         (strstr(usart2_cmd_buf, "OFFMQ2") || strstr(usart2_cmd_buf, "ONMQ2") ||
+                          strstr(usart2_cmd_buf, "OFFBH1750") || strstr(usart2_cmd_buf, "ONBH1750") ||
+                          strstr(usart2_cmd_buf, "OFFBPM180") || strstr(usart2_cmd_buf, "ONBPM180") ||
+                          strstr(usart2_cmd_buf, "OFFOLED") || strstr(usart2_cmd_buf, "ONOLED") ||
+                          strstr(usart2_cmd_buf, "OFFBLE") || strstr(usart2_cmd_buf, "ONBLE")))
+                {
+                    ProcessPeripheralPowerCommand(usart2_cmd_buf);
                     usart2_cmd_len = 0;
                 }
             }
@@ -688,7 +823,7 @@ AlertThreshold_t alertThreshold = {
     .ppmMin = 0.0f, // PPM下限
     .ppmMax = 50.0f, // PPM上限
     .pressureMin = 100000.0f, // 大气压下限
-    .pressureMax = 102500.0f // 大气压上限
+    .pressureMax = 103000.0f // 大气压上限
 };
 
 // 各传感器的异常状态监测
@@ -709,22 +844,32 @@ void Alert_SendWarning(const char* msg)
     uint16_t len = strlen(msg);
     if (len == 0) return;
 
-    // 检测蓝牙连接状态（BLE_STATE为高电平表示蓝牙已连接）
-    GPIO_PinState bleState = HAL_GPIO_ReadPin(BLE_STATE_GPIO_Port, BLE_STATE_Pin);
-
-    if (bleState == GPIO_PIN_SET)
+    // 如果蓝牙已关闭，直接发送到USART2
+    // 如果蓝牙未关闭，检测蓝牙连接状态（BLE_STATE为高电平表示蓝牙已连接）
+    if (blePowerCut)
     {
-        // 蓝牙已连接，只发送到USART3（蓝牙）
-#if ENABLE_USART3_TX
-        HAL_UART_Transmit(&huart3, (uint8_t*)msg, len, 100);
+        // 蓝牙已关闭，发送到USART2（Air780e）
+#if ENABLE_USART2_TX
+        HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
 #endif
     }
     else
     {
-        // 蓝牙未连接，发送到USART2（Air780e）
-#if ENABLE_USART2_TX
-        HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+        GPIO_PinState bleState = HAL_GPIO_ReadPin(BLE_STATE_GPIO_Port, BLE_STATE_Pin);
+        if (bleState == GPIO_PIN_SET)
+        {
+            // 蓝牙已连接，只发送到USART3（蓝牙）
+#if ENABLE_USART3_TX
+            HAL_UART_Transmit(&huart3, (uint8_t*)msg, len, 100);
 #endif
+        }
+        else
+        {
+            // 蓝牙未连接，发送到USART2（Air780e）
+#if ENABLE_USART2_TX
+            HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+#endif
+        }
     }
 }
 
@@ -880,14 +1025,19 @@ int main(void)
     const uint32_t PERIOD_UART2_MS = 5000; // Air780e发送周期（USART2）
 
     // 页面切换相关
-    uint8_t currentPage = 0; // 当前页面：0-第一页（温湿度亮度），1-第二页（雾度），2-第三页（BMP180）
+    uint8_t currentPage = 0; // 当前页面：0-第一页（温湿度亮度），1-第二页（雾度），2-第三页（BMP180），3-状态栏页面
     uint8_t lastKeyState = GPIO_PIN_SET; // 上次按键状态
     uint32_t keyPressTime = 0; // 按键按下时间
+    uint8_t lastOledKeyState = GPIO_PIN_SET; // OLED_KEY上次状态
+    uint32_t oledKeyPressTime = 0; // OLED_KEY按下时间
+    uint8_t lastStateKeyState = GPIO_PIN_SET; // STATE_KEY上次状态
+    uint32_t stateKeyPressTime = 0; // STATE_KEY按下时间
     const uint32_t KEY_DEBOUNCE_MS = 50; // 按键消抖时间
 
-    HAL_Delay(20);
+    HAL_Delay(100); // 等待100毫秒让OLED初始化
     OLED_Init();
     AHT20_Init();
+    StatusPage_Init(); // 初始化状态栏页面模块
     float temperature, humidity;
     char message[100];
 
@@ -1003,27 +1153,150 @@ int main(void)
         t_now = HAL_GetTick();
 
         // ====== 0) 按键检测与页面切换（带消抖）======
-        GPIO_PinState currentKeyState = HAL_GPIO_ReadPin(SWITCH_KEY_GPIO_Port, SWITCH_KEY_Pin);
-        if (currentKeyState == GPIO_PIN_RESET && lastKeyState == GPIO_PIN_SET)
+        // 只有在非状态栏页面时才允许SWITCH_KEY切换监测页
+        if (currentPage != 3)
+        {
+            GPIO_PinState currentKeyState = HAL_GPIO_ReadPin(SWITCH_KEY_GPIO_Port, SWITCH_KEY_Pin);
+            if (currentKeyState == GPIO_PIN_RESET && lastKeyState == GPIO_PIN_SET)
+            {
+                // 检测到按键按下（下降沿）
+                keyPressTime = t_now;
+            }
+            else if (currentKeyState == GPIO_PIN_SET && lastKeyState == GPIO_PIN_RESET)
+            {
+                // 检测到按键释放（上升沿）
+                if ((t_now - keyPressTime) >= KEY_DEBOUNCE_MS)
+                {
+                    // 有效按键，切换页面
+                    currentPage = (currentPage + 1) % 3; // 在0、1、2之间切换
+                    // 立即刷新OLED显示
+                    t_aht20 = 0; // 强制触发OLED刷新
+                }
+            }
+            lastKeyState = currentKeyState;
+        }
+        else
+        {
+            // 在状态栏页面时，保持lastKeyState状态
+            lastKeyState = HAL_GPIO_ReadPin(SWITCH_KEY_GPIO_Port, SWITCH_KEY_Pin);
+        }
+
+        // ====== 0.3) STATE_KEY 控制状态栏页面切换 ======
+        GPIO_PinState stateKeyState = HAL_GPIO_ReadPin(STATE_KEY_GPIO_Port, STATE_KEY_Pin);
+        if (stateKeyState == GPIO_PIN_RESET && lastStateKeyState == GPIO_PIN_SET)
         {
             // 检测到按键按下（下降沿）
-            keyPressTime = t_now;
+            stateKeyPressTime = t_now;
         }
-        else if (currentKeyState == GPIO_PIN_SET && lastKeyState == GPIO_PIN_RESET)
+        else if (stateKeyState == GPIO_PIN_SET && lastStateKeyState == GPIO_PIN_RESET)
         {
             // 检测到按键释放（上升沿）
-            if ((t_now - keyPressTime) >= KEY_DEBOUNCE_MS)
+            if ((t_now - stateKeyPressTime) >= KEY_DEBOUNCE_MS)
             {
-                // 有效按键，切换页面
-                currentPage = (currentPage + 1) % 3; // 在0、1、2之间切换
-                // 立即刷新OLED显示
-                t_aht20 = 0; // 强制触发OLED刷新
+                // 有效按键，切换状态栏页面
+                if (currentPage == 3)
+                {
+                    // 当前在状态栏页面，退出并返回监测页第一页
+                    StatusPage_Exit();
+                    // 清空USART2接收缓冲区，避免残留的状态消息数据影响后续命令
+                    usart2_cmd_len = 0;
+                    usart2_cmd_buf[0] = '\0';
+                    currentPage = 0; // 返回第一页
+                    t_aht20 = 0; // 强制触发OLED刷新
+                }
+                else
+                {
+                    // 当前在监测页，切换到状态栏页面
+                    currentPage = 3;
+                    StatusPage_Enter();
+                }
             }
         }
-        lastKeyState = currentKeyState;
+        lastStateKeyState = stateKeyState;
+
+        // ====== 0.5) OLED_KEY 控制 OLED 供电（非自锁按键，按一下切换一次）======
+        GPIO_PinState oledKeyState = HAL_GPIO_ReadPin(OLED_KEY_GPIO_Port, OLED_KEY_Pin);
+        if (oledKeyState == GPIO_PIN_RESET && lastOledKeyState == GPIO_PIN_SET)
+        {
+            oledKeyPressTime = t_now;
+        }
+        else if (oledKeyState == GPIO_PIN_SET && lastOledKeyState == GPIO_PIN_RESET)
+        {
+            if ((t_now - oledKeyPressTime) >= KEY_DEBOUNCE_MS)
+            {
+                if (oledPowerCut)
+                {
+                    // 上电：直接操作，因为此时OLED已经断电，不会有I2C冲突
+                    HAL_GPIO_WritePin(OLED_POWER_GPIO_Port, OLED_POWER_Pin, GPIO_PIN_SET);
+                    HAL_Delay(100);
+                    OLED_Init();
+                    oledPowerCut = 0;
+                    oledNeedReinit = 0;
+                }
+                else
+                {
+                    // 断电：使用待断电标志，让主循环安全地处理断电
+                    oledPendingPowerOff = 1;
+                }
+            }
+        }
+        lastOledKeyState = oledKeyState;
+
+        // ====== 0.6) 处理OLED待断电请求（安全断电）======
+        if (oledPendingPowerOff)
+        {
+            // 先关闭OLED显示（发送关闭命令），确保I2C操作完成
+            if (!oledPowerCut)
+            {
+                // 只有在OLED还上电时才需要关闭显示
+                OLED_DisPlay_Off();
+                // 等待I2C操作完成
+                HAL_Delay(10);
+            }
+            // 然后断电
+            HAL_GPIO_WritePin(OLED_POWER_GPIO_Port, OLED_POWER_Pin, GPIO_PIN_RESET);
+            oledPowerCut = 1;
+            oledNeedReinit = 0;
+            oledPendingPowerOff = 0; // 清除待断电标志
+        }
+
+        if (!oledPowerCut && oledNeedReinit)
+        {
+            HAL_Delay(100);
+            OLED_Init();
+            oledNeedReinit = 0;
+        }
+
+        // ====== 0.7) 处理BH1750 PowerDown模式切换 ======
+        static uint8_t lastBh1750PowerDown = 0;
+        if (bh1750PowerDown != lastBh1750PowerDown)
+        {
+            if (bh1750PowerDown)
+            {
+                // 进入PowerDown模式：先停止状态机，然后发送PowerDown命令
+                bh_state = BH_IDLE;
+                HAL_Delay(10); // 等待I2C操作完成
+                uint8_t cmd = BH1750_POWER_DOWN;
+                HAL_I2C_Master_Transmit(&hi2c1, hbh1750.devAddr7 << 1, &cmd, 1, 10);
+            }
+            else
+            {
+                // 退出PowerDown模式：发送PowerOn命令并重新初始化
+                uint8_t cmd = BH1750_POWER_ON;
+                HAL_I2C_Master_Transmit(&hi2c1, hbh1750.devAddr7 << 1, &cmd, 1, 10);
+                HAL_Delay(10);
+                if (BH1750_Init(&hbh1750, &hi2c1, BH1750_ADDR_HIGH) == BH1750_OK)
+                {
+                    bh_state = BH_IDLE;
+                    t_bh1750 = t_now; // 重置定时器
+                }
+            }
+            lastBh1750PowerDown = bh1750PowerDown;
+        }
 
         // ====== 1) 非阻塞触发 BH1750 测量（极短 I2C 命令）======
-        if ((uint32_t)(t_now - t_bh1750) >= PERIOD_BH_MS && bh_state == BH_IDLE)
+        // 只有在BH1750未进入PowerDown模式时才进行操作
+        if (!bh1750PowerDown && (uint32_t)(t_now - t_bh1750) >= PERIOD_BH_MS && bh_state == BH_IDLE)
         {
             // 发送一次性高分辨率模式命令（0x20）
             uint8_t cmd = BH1750_ONESHOT_HRES_MODE;
@@ -1039,9 +1312,15 @@ int main(void)
             }
             t_bh1750 = t_now; // 即便失败也推进周期，避免总线被打爆
         }
+        else if (bh1750PowerDown && bh_state != BH_IDLE)
+        {
+            // 如果进入PowerDown模式但状态不是IDLE，立即停止
+            bh_state = BH_IDLE;
+        }
 
         // ====== 2) 到时读取 BH1750（极短 I2C 读 2 字节）======
-        if (bh_state == BH_WAIT && (int32_t)(t_now - bh_deadline_ms) >= 0)
+        // 只有在BH1750未进入PowerDown模式时才进行读取
+        if (!bh1750PowerDown && bh_state == BH_WAIT && (int32_t)(t_now - bh_deadline_ms) >= 0)
         {
             uint8_t buf[2];
             if (HAL_I2C_Master_Receive(&hi2c1, hbh1750.devAddr7 << 1, buf, 2, 2) == HAL_OK)
@@ -1084,7 +1363,8 @@ int main(void)
         }
 
         // ====== 2.6) 读取 BMP180 温度和压力 ======
-        if ((uint32_t)(t_now - t_bmp180) >= PERIOD_BMP180_MS)
+        // 只有在BMP180未禁用时才进行读取（不关闭电源，避免影响I2C总线）
+        if (!bmp180Disabled && (uint32_t)(t_now - t_bmp180) >= PERIOD_BMP180_MS)
         {
             int32_t temp_x10 = 0; // 温度 * 10 (0.1°C单位)
             int32_t press_pa = 0; // 压力 (Pa)
@@ -1102,10 +1382,50 @@ int main(void)
         // ====== 3) 环境采样与 OLED 刷新（非阻塞节拍）======
         if ((uint32_t)(t_now - t_aht20) >= PERIOD_ENV_MS)
         {
+            // 检查I2C总线状态，如果异常则恢复
+            if (HAL_I2C_GetState(&hi2c1) != HAL_I2C_STATE_READY)
+            {
+                // I2C总线异常，尝试恢复
+                HAL_I2C_DeInit(&hi2c1);
+                HAL_Delay(10);
+                MX_I2C1_Init();
+            }
+            
             // 读取温湿度（原始数据）
+            // 先保存上次的值，以便I2C通信失败时使用
+            float lastTempBeforeRead = filteredTemperature;
+            float lastHumiBeforeRead = filteredHumidity;
+            
             AHT20_Measure();
             float rawTemperature = AHT20_Temperature();
             float rawHumidity = AHT20_Humidity();
+            
+            // 检查读取到的数据是否合理（快速预检查）
+            // 如果数据明显异常（如全0、全1或超出物理范围），可能是I2C通信失败
+            uint8_t dataInvalid = 0;
+            if (rawTemperature < -50.0f || rawTemperature > 100.0f || 
+                rawHumidity < 0.0f || rawHumidity > 100.0f ||
+                (rawTemperature == 0.0f && rawHumidity == 0.0f))
+            {
+                dataInvalid = 1;
+            }
+            
+            // 检查温度变化是否过大（如果温度突然变化超过30度，可能是错误数据）
+            if (!dataInvalid && lastTempBeforeRead != 0.0f)
+            {
+                float tempChange = fabsf(rawTemperature - lastTempBeforeRead);
+                if (tempChange > 30.0f) // 温度变化超过30度，可能是错误数据
+                {
+                    dataInvalid = 1;
+                }
+            }
+            
+            if (dataInvalid)
+            {
+                // 数据异常，可能是I2C通信失败，使用上次的有效值
+                rawTemperature = lastTempBeforeRead;
+                rawHumidity = lastHumiBeforeRead;
+            }
 
             // 数据过滤（范围检查 + 非对称变化率限制 + 超时重置 + 中值滤波）
             AHT20_FilterData(rawTemperature, rawHumidity,
@@ -1116,7 +1436,17 @@ int main(void)
             temperature = filteredTemperature;
             humidity = filteredHumidity;
 
-            OLED_NewFrame();
+            // 只有在OLED未断电时才刷新显示
+            if (!oledPowerCut)
+            {
+                // 如果是状态栏页面，使用状态栏页面显示函数
+                if (currentPage == 3)
+                {
+                    StatusPage_UpdateDisplay();
+                }
+                else
+                {
+                    OLED_NewFrame();
 
             if (currentPage == 0)
             {
@@ -1195,7 +1525,9 @@ int main(void)
                 }
             }
 
-            OLED_ShowFrame();
+                    OLED_ShowFrame();
+                }
+            }
 
             // ====== 异常检测与警告发送 ======
             // 检查所有传感器数据，如果异常持续3秒则发送警告
@@ -1218,12 +1550,16 @@ int main(void)
                                bmp180_temp, bmp180_pressure / 100.0f);
 
 #if ENABLE_USART3_TX
-            // 检测BLE_STATE引脚状态，只有当BLE_STATE为高电平时才发送到USART3（蓝牙）
-            GPIO_PinState bleState = HAL_GPIO_ReadPin(BLE_STATE_GPIO_Port, BLE_STATE_Pin);
-            if (bleState == GPIO_PIN_SET && len > 0)
+            // 如果蓝牙已关闭，不发送到USART3
+            // 如果蓝牙未关闭，检测BLE_STATE引脚状态，只有当BLE_STATE为高电平时才发送到USART3（蓝牙）
+            if (!blePowerCut)
             {
-                // BLE_STATE为高电平，允许USART3发送(蓝牙)
-                HAL_UART_Transmit(&huart3, (uint8_t*)message, (uint16_t)len, 100);
+                GPIO_PinState bleState = HAL_GPIO_ReadPin(BLE_STATE_GPIO_Port, BLE_STATE_Pin);
+                if (bleState == GPIO_PIN_SET && len > 0)
+                {
+                    // BLE_STATE为高电平，允许USART3发送(蓝牙)
+                    HAL_UART_Transmit(&huart3, (uint8_t*)message, (uint16_t)len, 100);
+                }
             }
 #endif
 
@@ -1241,12 +1577,25 @@ int main(void)
                                bmp180_temp, bmp180_pressure / 100.0f);
 
 #if ENABLE_USART2_TX
-            // 检测BLE_STATE引脚状态，只有当BLE_STATE为低电平时才发送到USART2
-            GPIO_PinState bleState = HAL_GPIO_ReadPin(BLE_STATE_GPIO_Port, BLE_STATE_Pin);
-            if (bleState == GPIO_PIN_RESET && len > 0)
+            // 如果蓝牙已关闭，直接允许USART2发送
+            // 如果蓝牙未关闭，检测BLE_STATE引脚状态，只有当BLE_STATE为低电平时才发送到USART2
+            if (blePowerCut)
             {
-                // BLE_STATE为低电平，允许USART2发送(Air780e)
-                HAL_UART_Transmit(&huart2, (uint8_t*)message, (uint16_t)len, 100);
+                // 蓝牙已关闭，直接发送到USART2(Air780e)
+                if (len > 0)
+                {
+                    HAL_UART_Transmit(&huart2, (uint8_t*)message, (uint16_t)len, 100);
+                }
+            }
+            else
+            {
+                // 蓝牙未关闭，检查BLE_STATE引脚状态
+                GPIO_PinState bleState = HAL_GPIO_ReadPin(BLE_STATE_GPIO_Port, BLE_STATE_Pin);
+                if (bleState == GPIO_PIN_RESET && len > 0)
+                {
+                    // BLE_STATE为低电平，允许USART2发送(Air780e)
+                    HAL_UART_Transmit(&huart2, (uint8_t*)message, (uint16_t)len, 100);
+                }
             }
 #endif
 

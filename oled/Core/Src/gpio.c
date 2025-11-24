@@ -50,20 +50,30 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(MQ2_POWER_GPIO_Port, MQ2_POWER_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, BH1750_POWER_Pin|BPM180_POWER_Pin|BLE_POWER_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin : MQ2_POWER_Pin */
-  GPIO_InitStruct.Pin = MQ2_POWER_Pin;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, OLED_POWER_Pin|MQ2_POWER_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pins : BH1750_POWER_Pin BPM180_POWER_Pin BLE_POWER_Pin */
+  GPIO_InitStruct.Pin = BH1750_POWER_Pin|BPM180_POWER_Pin|BLE_POWER_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(MQ2_POWER_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SWITCH_KEY_Pin */
-  GPIO_InitStruct.Pin = SWITCH_KEY_Pin;
+  /*Configure GPIO pins : OLED_POWER_Pin MQ2_POWER_Pin */
+  GPIO_InitStruct.Pin = OLED_POWER_Pin|MQ2_POWER_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : SWITCH_KEY_Pin OLED_KEY_Pin STATE_KEY_Pin */
+  GPIO_InitStruct.Pin = SWITCH_KEY_Pin|OLED_KEY_Pin|STATE_KEY_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(SWITCH_KEY_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BLE_STATE_Pin */
   GPIO_InitStruct.Pin = BLE_STATE_Pin;

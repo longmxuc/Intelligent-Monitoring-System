@@ -47,6 +47,7 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Inc/mq2.h
         Core/Inc/bmp180.h
         Core/Src/bmp180.c
+        Core/Src/status_page.c
 )
 
 # Add STM32CubeMX generated sources

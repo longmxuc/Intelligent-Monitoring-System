@@ -27,12 +27,12 @@
 > 在线体验地址：https://znhj.iepose.cn  
 
 <span>
-<img src="/Users/leslie/Desktop/shared/bishe/bishe_proj/README_IMG/截屏2025-11-24 17.19.44.png" alt="主页" style="zoom:10%;" />
-<img src="/Users/leslie/Desktop/shared/bishe/bishe_proj/README_IMG/截屏2025-11-24 17.20.54.png" alt="实时数据页" style="zoom:10%;" />
+<img src="README_IMG/截屏2025-11-24 17.19.44.png" alt="主页" style="zoom:10%;" />
+<img src="README_IMG/截屏2025-11-24 17.20.54.png" alt="实时数据页" style="zoom:10%;" />
 </span>
 <span>
-<img src="/Users/leslie/Desktop/shared/bishe/bishe_proj/README_IMG/截屏2025-11-24 17.20.12.png" alt="暗色模式1" style="zoom:10%;" />
-<img src="/Users/leslie/Desktop/shared/bishe/bishe_proj/README_IMG/截屏2025-11-24 17.20.23.png" alt="暗色模式2" style="zoom:10%;" />
+<img src="README_IMG/截屏2025-11-24 17.20.12.png" alt="暗色模式1" style="zoom:10%;" />
+<img src="README_IMG/截屏2025-11-24 17.20.23.png" alt="暗色模式2" style="zoom:10%;" />
 </span>
 
 ---

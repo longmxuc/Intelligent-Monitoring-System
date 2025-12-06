@@ -2970,6 +2970,127 @@
     // 主题系统、工具函数、通知系统、数据加载系统已移至 common.js
     
     // 页面加载完成后初始化所有功能
+    const DEVICE_STORAGE_KEY = 'device_overview_selected';
+    let requireDeviceSelection = true;
+    let pendingMessageCenterDeviceId = null;
+
+    function normalizeDeviceId(id) {
+        if (!id && id !== 0) return '';
+        return String(id).trim().toUpperCase();
+    }
+
+    function applySelectedDevice(deviceId) {
+        const normalized = normalizeDeviceId(deviceId);
+        if (!normalized) return;
+        window.selectedDeviceId = normalized;
+        requireDeviceSelection = false;
+        try {
+            localStorage.setItem(DEVICE_STORAGE_KEY, normalized);
+        } catch (error) {
+            console.warn('保存设备选择失败：', error);
+        }
+    }
+
+    async function openDeviceSelector(hintText) {
+        if (typeof window.openDevicePicker === 'function') {
+            return window.openDevicePicker(hintText, requireDeviceSelection ? null : window.selectedDeviceId);
+        }
+        return null;
+    }
+
+    function closeFunctionMenuDropdown() {
+        const menuDropdown = document.getElementById('menuDropdown');
+        const menuBtn = document.getElementById('menuBtn');
+        const menuArrow = document.getElementById('menuArrow');
+        if (menuDropdown && menuDropdown.classList.contains('show')) {
+            menuDropdown.classList.remove('show');
+            menuBtn?.classList.remove('active');
+            if (menuArrow) {
+                menuArrow.style.transform = 'rotate(0deg)';
+            }
+        }
+    }
+
+    function setupAnalysisMessageCenterSelection() {
+        const messageBtn = document.getElementById('messageCenterBtn');
+        if (!messageBtn) return;
+
+        window.setPendingMessageCenterDevice = function (deviceId) {
+            pendingMessageCenterDeviceId = deviceId ? normalizeDeviceId(deviceId) : null;
+        };
+
+        if (window.MessageCenter && typeof window.MessageCenter.setBeforeOpenHook === 'function') {
+            window.MessageCenter.setBeforeOpenHook(() => {
+                if (pendingMessageCenterDeviceId) {
+                    const deviceId = pendingMessageCenterDeviceId;
+                    pendingMessageCenterDeviceId = null;
+                    return deviceId;
+                }
+                return window.selectedDeviceId || null;
+            });
+        }
+
+        messageBtn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            closeFunctionMenuDropdown();
+
+            const deviceId = await openDeviceSelector('请选择要查看消息的设备');
+            if (!deviceId) return;
+
+            applySelectedDevice(deviceId);
+            pendingMessageCenterDeviceId = normalizeDeviceId(deviceId);
+
+            setTimeout(() => {
+                if (window.MessageCenter && typeof window.MessageCenter.open === 'function') {
+                    window.MessageCenter.open();
+                }
+            }, 80);
+        }, true);
+    }
+
+    function setupAnalysisPowerControlGuard() {
+        const originalBtn = document.querySelector('[data-power-control-trigger]');
+        if (!originalBtn) return;
+
+        const powerBtn = originalBtn.cloneNode(true);
+        originalBtn.parentNode.replaceChild(powerBtn, originalBtn);
+
+        powerBtn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            closeFunctionMenuDropdown();
+
+            const deviceId = await openDeviceSelector('请选择要控制的设备');
+            if (!deviceId) return;
+
+            applySelectedDevice(deviceId);
+
+            if (window.PowerControlModal && typeof window.PowerControlModal.open === 'function') {
+                window.PowerControlModal.open(normalizeDeviceId(deviceId));
+            } else {
+                console.error('PowerControlModal 未初始化');
+            }
+        }, true);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        try {
+            const saved = localStorage.getItem(DEVICE_STORAGE_KEY);
+            const normalized = normalizeDeviceId(saved);
+            if (normalized) {
+                window.selectedDeviceId = normalized;
+                requireDeviceSelection = false;
+            }
+        } catch (error) {
+            console.warn('读取设备选择失败：', error);
+        }
+        setupAnalysisMessageCenterSelection();
+        setupAnalysisPowerControlGuard();
+    });
+
     window.addEventListener('load', function() {
         // 初始化帮助弹窗和功能菜单
         initHelpModal();

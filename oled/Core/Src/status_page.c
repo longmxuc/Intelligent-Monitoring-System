@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 /* Private typedef -----------------------------------------------------------*/
 
@@ -41,13 +42,29 @@ static StatusPageData_t statusData = {
     .minute = 0,
     .second = 0,
     .onlineCount = 0,
-    .dataValid = 0
+    .dataValid = 0,
+    .timeoutWarning = 0
 };
 
 /* Private function prototypes -----------------------------------------------*/
 static void StatusPage_SendCommand(const char* cmd);
 static void StatusPage_DisplayLoading(void);
 static void StatusPage_DisplayContent(void);
+static uint8_t StatusPage_MatchPrefixIgnoreCase(const char* src, const char* keyword);
+
+static uint8_t StatusPage_MatchPrefixIgnoreCase(const char* src, const char* keyword)
+{
+    while (*keyword && *src)
+    {
+        if (tolower((unsigned char)*src) != tolower((unsigned char)*keyword))
+        {
+            return 0;
+        }
+        src++;
+        keyword++;
+    }
+    return (*keyword == '\0') ? 1 : 0;
+}
 
 /* Private user code ---------------------------------------------------------*/
 
@@ -58,13 +75,13 @@ static void StatusPage_DisplayContent(void);
 static void StatusPage_SendCommand(const char* cmd)
 {
     if (cmd == NULL) return;
-    
+
     uint16_t len = strlen(cmd);
     if (len == 0) return;
-    
+
     // 检查蓝牙电源引脚状态（如果蓝牙断电，引脚为低电平）
     GPIO_PinState blePowerState = HAL_GPIO_ReadPin(BLE_POWER_GPIO_Port, BLE_POWER_Pin);
-    
+
     // 如果蓝牙已关闭（电源引脚为低电平），直接发送到USART2
     if (blePowerState == GPIO_PIN_RESET)
     {
@@ -110,13 +127,23 @@ static void StatusPage_DisplayLoading(void)
 static void StatusPage_DisplayContent(void)
 {
     OLED_NewFrame();
-    
-    // 上方显示时间（24小时制）
+
+    if (statusData.timeoutWarning)
+    {
+        OLED_DrawImage(0, 15, &sadImg, OLED_COLOR_NORMAL);
+        OLED_PrintString(45, 15, "接收超时", &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(30, 35, "请重启状态栏", &font16x16, OLED_COLOR_NORMAL);
+        OLED_ShowFrame();
+        return;
+    }
+
+    // 上方显示时间和笑脸（24小时制）
     char timeStr[16];
-    snprintf(timeStr, sizeof(timeStr), "%02d:%02d:%02d", 
+    snprintf(timeStr, sizeof(timeStr), "%02d:%02d:%02d",
              statusData.hour, statusData.minute, statusData.second);
-    OLED_PrintString(20, 5, timeStr, &font16x16, OLED_COLOR_NORMAL);
-    
+    OLED_DrawImage(0,15,&smileImg, OLED_COLOR_NORMAL);
+    OLED_PrintString(45, 15, timeStr, &font16x16, OLED_COLOR_NORMAL);
+
     // 下方显示当前连接人数
     char countStr[32];
     if (statusData.dataValid)
@@ -127,8 +154,8 @@ static void StatusPage_DisplayContent(void)
     {
         snprintf(countStr, sizeof(countStr), "在线人数: --");
     }
-    OLED_PrintString(10, 45, countStr, &font16x16, OLED_COLOR_NORMAL);
-    
+    OLED_PrintString(35, 35, countStr, &font16x16, OLED_COLOR_NORMAL);
+
     OLED_ShowFrame();
 }
 
@@ -145,6 +172,7 @@ void StatusPage_Init(void)
     statusData.second = 0;
     statusData.onlineCount = 0;
     statusData.dataValid = 0;
+    statusData.timeoutWarning = 0;
 }
 
 /**
@@ -155,10 +183,11 @@ void StatusPage_Enter(void)
     // 切换到加载状态
     statusData.state = STATUS_PAGE_LOADING;
     statusData.dataValid = 0;
-    
+    statusData.timeoutWarning = 0;
+
     // 显示"正在加载..."
     StatusPage_DisplayLoading();
-    
+
     // 发送"onmessage"命令
     StatusPage_SendCommand("onmessage\r\n");
 }
@@ -170,10 +199,11 @@ void StatusPage_Exit(void)
 {
     // 发送"offmessage"命令
     StatusPage_SendCommand("offmessage\r\n");
-    
+
     // 切换到空闲状态
     statusData.state = STATUS_PAGE_IDLE;
     statusData.dataValid = 0;
+    statusData.timeoutWarning = 0;
 }
 
 /**
@@ -184,9 +214,9 @@ void StatusPage_UpdateDisplay(void)
 {
     if (statusData.state == STATUS_PAGE_IDLE)
     {
-        return;  // 不在状态栏页面，不更新
+        return; // 不在状态栏页面，不更新
     }
-    
+
     // 根据当前状态显示相应内容
     if (statusData.state == STATUS_PAGE_LOADING)
     {
@@ -205,91 +235,140 @@ void StatusPage_UpdateDisplay(void)
  * @param data 接收到的数据字符串（格式: "ms:t_17:15:15,p_1"）
  * @return 1=解析成功, 0=解析失败
  */
-uint8_t StatusPage_ParseMessage(const char* data)
+uint8_t StatusPage_ParseMessage(const char* data, uint16_t len, uint16_t* consumedLen)
 {
-    if (data == NULL) return 0;
-    
-    // 创建临时缓冲区，去除换行符、回车符和空格
-    char cleanBuf[64];
-    uint8_t i = 0;
-    uint8_t j = 0;
-    while (data[i] != '\0' && j < sizeof(cleanBuf) - 1)
+    if (data == NULL || len == 0) return 0;
+
+    uint16_t index = 0;
+    // 跳过前导空白字符
+    while (index < len && (data[index] == '\r' || data[index] == '\n' || data[index] == ' '))
     {
-        // 跳过换行符、回车符和空格
-        if (data[i] != '\r' && data[i] != '\n' && data[i] != ' ')
+        index++;
+    }
+
+    // 检查特殊指令：ms:timeout
+    const char* timeoutPtr = strstr(data + index, "ms:timeout");
+    if (timeoutPtr != NULL && timeoutPtr < data + len)
+    {
+        // 确保前面没有其它可解析的状态消息（否则先解析状态消息）
+        uint16_t offset = (uint16_t)(timeoutPtr - data);
+        if (offset <= index)
         {
-            cleanBuf[j++] = data[i];
+            statusData.timeoutWarning = 1;
+            statusData.dataValid = 0;
+            if (statusData.state == STATUS_PAGE_LOADING)
+            {
+                statusData.state = STATUS_PAGE_ACTIVE;
+            }
+            if (consumedLen != NULL)
+            {
+                uint16_t endIdx = offset + 10;
+                while (endIdx < len && (data[endIdx] == '\r' || data[endIdx] == '\n' || data[endIdx] == ' '))
+                {
+                    endIdx++;
+                }
+                *consumedLen = endIdx;
+            }
+            return 1;
         }
-        i++;
     }
-    cleanBuf[j] = '\0';
-    
-    // 如果清理后的缓冲区为空，返回失败
-    if (j == 0) return 0;
-    
-    // 检查是否以"ms:"开头
-    if (strncmp(cleanBuf, "ms:", 3) != 0)
+
+    const char* startPtr = data + index;
+
+    if (strncmp(startPtr, "ms:", 3) != 0)
     {
-        return 0;  // 不是状态消息格式
+        return 0; // 不是状态消息格式
     }
-    
-    // 查找时间部分 "t_HH:MM:SS"
-    const char* timePtr = strstr(cleanBuf, "t_");
+
+    // 特殊指令：ms:timeout（不区分大小写）
+    if (len - index >= 10 && StatusPage_MatchPrefixIgnoreCase(startPtr, "ms:timeout"))
+    {
+        statusData.timeoutWarning = 1;
+        statusData.dataValid = 0;
+        if (statusData.state == STATUS_PAGE_LOADING)
+        {
+            statusData.state = STATUS_PAGE_ACTIVE;
+        }
+        if (consumedLen != NULL)
+        {
+            uint16_t endIdx = index + 10;
+            while (endIdx < len && (data[endIdx] == '\r' || data[endIdx] == '\n' || data[endIdx] == ' '))
+            {
+                endIdx++;
+            }
+            *consumedLen = endIdx;
+        }
+        return 1;
+    }
+
+    if (len - index < 16) return 0; // 长度不足
+
+    const char* timePtr = strstr(startPtr, "t_");
     if (timePtr == NULL) return 0;
-    
-    timePtr += 2;  // 跳过"t_"
-    
+
+    timePtr += 2; // 跳过"t_"
+
     // 解析时间 HH:MM:SS
     unsigned int hour, minute, second;
-    int parsed = sscanf(timePtr, "%u:%u:%u", &hour, &minute, &second);
-    if (parsed != 3)
+    if (sscanf(timePtr, "%u:%u:%u", &hour, &minute, &second) != 3)
     {
-        return 0;  // 时间格式错误
+        return 0; // 时间格式错误
     }
-    
+
     // 查找人数部分 ",p_N"
-    const char* peoplePtr = strstr(cleanBuf, ",p_");
+    const char* peoplePtr = strstr(timePtr, ",p_");
     if (peoplePtr == NULL)
     {
-        return 0;  // 必须包含",p_"
+        return 0; // 必须包含",p_"
     }
-    peoplePtr += 3;  // 跳过",p_"
-    
-    // 检查人数部分是否有有效字符
+    peoplePtr += 3; // 跳过",p_"
+
     if (*peoplePtr == '\0')
     {
-        return 0;  // 人数部分为空
+        return 0; // 人数部分为空
     }
-    
-    // 解析人数（sscanf会自动停止在非数字字符处）
-    unsigned int count;
-    char* endPtr;
-    count = (unsigned int)strtoul(peoplePtr, &endPtr, 10);
-    if (endPtr == peoplePtr)
+
+    const char* digitPtr = peoplePtr;
+    while (digitPtr < data + len && isdigit((unsigned char)*digitPtr))
     {
-        return 0;  // 人数格式错误，无法解析数字
+        digitPtr++;
     }
-    
+
+    if (digitPtr == peoplePtr)
+    {
+        return 0; // 不存在数字
+    }
+
+    unsigned int count = 0;
+    if (sscanf(peoplePtr, "%u", &count) != 1)
+    {
+        return 0;
+    }
+
     // 更新数据（进行范围检查）
     if (hour > 23 || minute > 59 || second > 59 || count > 255)
     {
-        return 0;  // 值超出范围
+        return 0; // 值超出范围
     }
-    
-    // 更新状态数据
+
     statusData.hour = (uint8_t)hour;
     statusData.minute = (uint8_t)minute;
     statusData.second = (uint8_t)second;
     statusData.onlineCount = (uint8_t)count;
     statusData.dataValid = 1;
-    
-    // 如果还在加载状态，切换到激活状态
+    statusData.timeoutWarning = 0;
+
     if (statusData.state == STATUS_PAGE_LOADING)
     {
         statusData.state = STATUS_PAGE_ACTIVE;
     }
-    
-    return 1;  // 解析成功
+
+    if (consumedLen != NULL)
+    {
+        *consumedLen = (uint16_t)(digitPtr - data);
+    }
+
+    return 1; // 解析成功
 }
 
 /**
@@ -311,4 +390,3 @@ uint8_t StatusPage_IsActive(void)
 }
 
 /* USER CODE END */
-

@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <ctype.h>
 
 #include "oled.h"
 #include "aht20.h"
@@ -85,6 +86,7 @@ void Alert_SendWarning(const char* msg);
 void Alert_CheckAndSend(float temperature, float humidity, float lux,
                         float ppm, float pressure, uint8_t ppmCalibrated,
                         uint32_t currentTime);
+static uint8_t USART2_BufferStartsWithTimeout(const char* buf, uint16_t len);
 
 /* USER CODE END PFP */
 
@@ -130,6 +132,20 @@ typedef struct
 } AlertStatus_t;
 
 // 处理多模块电源控制命令（来自串口2或串口3）
+static uint8_t USART2_BufferStartsWithTimeout(const char* buf, uint16_t len)
+{
+    const char* keyword = "ms:timeout";
+    if (buf == NULL || len < 10) return 0;
+    for (uint8_t i = 0; i < 10; i++)
+    {
+        if (tolower((unsigned char)buf[i]) != keyword[i])
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void ProcessPeripheralPowerCommand(const char* text)
 {
     if (text == NULL) return;
@@ -198,15 +214,16 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
             memcpy(buf, receiveData, n);
             buf[n] = '\0';
             
-            // 检查是否是状态消息（以"ms:"开头）
-            if (strncmp(buf, "ms:", 3) == 0)
+            uint16_t consumed = 0;
+            if (StatusPage_IsActive() && StatusPage_ParseMessage(buf, n, &consumed))
             {
-                // 解析状态消息
-                StatusPage_ParseMessage(buf);
+                if (consumed < n)
+                {
+                    ProcessPeripheralPowerCommand(buf + consumed);
+                }
             }
             else
             {
-                // 处理其他命令
                 ProcessPeripheralPowerCommand(buf);
             }
             // HAL_UART_Transmit_DMA(&huart3, (uint8_t*)buf, n);
@@ -223,93 +240,98 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
     if (huart == &huart2)
     {
         uint8_t ch = usart2_rx_byte;
+
         if (ch == '\n' || ch == '\r')
         {
             if (usart2_cmd_len > 0)
             {
                 usart2_cmd_buf[usart2_cmd_len] = '\0';
-                
-                // 检查是否是状态消息（以"ms:"开头）
-                if (strncmp(usart2_cmd_buf, "ms:", 3) == 0)
+                uint16_t consumed = 0;
+                if (!StatusPage_ParseMessage(usart2_cmd_buf, usart2_cmd_len, &consumed))
                 {
-                    // 解析状态消息
-                    StatusPage_ParseMessage(usart2_cmd_buf);
-                }
-                else
-                {
-                    // 处理其他命令
                     ProcessPeripheralPowerCommand(usart2_cmd_buf);
                 }
                 usart2_cmd_len = 0;
+                usart2_cmd_buf[0] = '\0';
             }
         }
         else if (ch == ' ')
         {
-            // 空格作为分隔符，处理命令（保持原有逻辑）
             if (usart2_cmd_len > 0)
             {
                 usart2_cmd_buf[usart2_cmd_len] = '\0';
-                // 只处理非状态消息的命令（状态消息应该以换行符结束）
                 if (strncmp(usart2_cmd_buf, "ms:", 3) != 0)
                 {
                     ProcessPeripheralPowerCommand(usart2_cmd_buf);
                 }
                 usart2_cmd_len = 0;
+                usart2_cmd_buf[0] = '\0';
             }
         }
         else
         {
-            // 如果接收到命令开始字符（'O'表示OFF/ON命令，'m'表示状态消息），且缓冲区不为空
-            // 检查是否是新的命令开始，如果是则清空旧数据
-            if (usart2_cmd_len > 0)
-            {
-                // 如果缓冲区中是状态消息，但接收到的是命令字符（'O'），清空缓冲区
-                if (strncmp(usart2_cmd_buf, "ms:", 3) == 0 && (ch == 'O' || ch == 'o'))
-                {
-                    usart2_cmd_len = 0;  // 清空状态消息数据，准备接收新命令
-                }
-                // 如果缓冲区中不是状态消息，但接收到的是状态消息开始字符（'m'），清空缓冲区
-                else if (strncmp(usart2_cmd_buf, "ms:", 3) != 0 && ch == 'm')
-                {
-                    usart2_cmd_len = 0;  // 清空旧数据，准备接收新消息
-                }
-            }
-            
             if (usart2_cmd_len < sizeof(usart2_cmd_buf) - 1)
             {
                 usart2_cmd_buf[usart2_cmd_len++] = (char)ch;
                 usart2_cmd_buf[usart2_cmd_len] = '\0';
-                
-                // 检查是否是状态消息（以"ms:"开头）
-                // 状态消息格式：ms:t_HH:MM:SS,p_N（最小长度约18字符，如：ms:t_17:31:31,p_2）
-                // 当接收到足够字符（至少18个）且包含",p_"时，尝试解析
-                if (strncmp(usart2_cmd_buf, "ms:", 3) == 0 && usart2_cmd_len >= 18)
+
+                if (USART2_BufferStartsWithTimeout(usart2_cmd_buf, usart2_cmd_len))
                 {
-                    // 检查是否包含完整的状态消息格式（包含",p_"）
-                    if (strstr(usart2_cmd_buf, ",p_") != NULL)
+                    uint16_t consumed = 0;
+                    if (StatusPage_ParseMessage(usart2_cmd_buf, usart2_cmd_len, &consumed))
                     {
-                        // 尝试解析状态消息
-                        if (StatusPage_ParseMessage(usart2_cmd_buf))
+                        if (consumed < usart2_cmd_len)
                         {
-                            // 解析成功，清空缓冲区
-                            usart2_cmd_len = 0;
+                            uint16_t remaining = usart2_cmd_len - consumed;
+                            memmove(usart2_cmd_buf, usart2_cmd_buf + consumed, remaining);
+                            usart2_cmd_len = remaining;
+                            usart2_cmd_buf[remaining] = '\0';
                         }
-                        // 如果解析失败，继续接收（可能数据还没完整）
-                        // 但如果数据长度已经很长（超过30），可能是格式错误，清空缓冲区
-                        else if (usart2_cmd_len >= 30)
+                        else
                         {
-                            usart2_cmd_len = 0;  // 防止缓冲区溢出
+                            usart2_cmd_len = 0;
+                            usart2_cmd_buf[0] = '\0';
                         }
                     }
-                    // 如果数据长度超过30但还没找到",p_"，可能是格式错误，清空缓冲区
                     else if (usart2_cmd_len >= 30)
                     {
-                        usart2_cmd_len = 0;  // 防止缓冲区溢出
+                        usart2_cmd_len = 0;
+                        usart2_cmd_buf[0] = '\0';
                     }
                 }
-                // 即时检查关键词（无分隔也能识别）
-                // 注意：只有在不是状态消息的情况下才检查这些关键词
-                else if (strncmp(usart2_cmd_buf, "ms:", 3) != 0 && 
+                else if (strncmp(usart2_cmd_buf, "ms:", 3) == 0 && usart2_cmd_len >= 18)
+                {
+                    if (strstr(usart2_cmd_buf, ",p_") != NULL)
+                    {
+                        uint16_t consumed = 0;
+                        if (StatusPage_ParseMessage(usart2_cmd_buf, usart2_cmd_len, &consumed))
+                        {
+                            if (consumed < usart2_cmd_len)
+                            {
+                                uint16_t remaining = usart2_cmd_len - consumed;
+                                memmove(usart2_cmd_buf, usart2_cmd_buf + consumed, remaining);
+                                usart2_cmd_len = remaining;
+                                usart2_cmd_buf[remaining] = '\0';
+                            }
+                            else
+                            {
+                                usart2_cmd_len = 0;
+                                usart2_cmd_buf[0] = '\0';
+                            }
+                        }
+                        else if (usart2_cmd_len >= 30)
+                        {
+                            usart2_cmd_len = 0;
+                            usart2_cmd_buf[0] = '\0';
+                        }
+                    }
+                    else if (usart2_cmd_len >= 30)
+                    {
+                        usart2_cmd_len = 0;
+                        usart2_cmd_buf[0] = '\0';
+                    }
+                }
+                else if (strncmp(usart2_cmd_buf, "ms:", 3) != 0 &&
                          (strstr(usart2_cmd_buf, "OFFMQ2") || strstr(usart2_cmd_buf, "ONMQ2") ||
                           strstr(usart2_cmd_buf, "OFFBH1750") || strstr(usart2_cmd_buf, "ONBH1750") ||
                           strstr(usart2_cmd_buf, "OFFBPM180") || strstr(usart2_cmd_buf, "ONBPM180") ||
@@ -318,15 +340,16 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
                 {
                     ProcessPeripheralPowerCommand(usart2_cmd_buf);
                     usart2_cmd_len = 0;
+                    usart2_cmd_buf[0] = '\0';
                 }
             }
             else
             {
-                // 溢出保护，复位
                 usart2_cmd_len = 0;
+                usart2_cmd_buf[0] = '\0';
             }
         }
-        // 继续下一字节接收
+
         HAL_UART_Receive_IT(&huart2, &usart2_rx_byte, 1);
     }
 }

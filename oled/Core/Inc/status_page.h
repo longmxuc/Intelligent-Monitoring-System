@@ -45,6 +45,7 @@ typedef struct {
     uint8_t second;              // 秒 (0-59)
     uint8_t onlineCount;         // 在线人数
     uint8_t dataValid;           // 数据是否有效 (0=无效, 1=有效)
+    uint8_t timeoutWarning;      // 是否处于超时提示状态
 } StatusPageData_t;
 
 /* Exported constants --------------------------------------------------------*/
@@ -78,7 +79,7 @@ void StatusPage_UpdateDisplay(void);
  * @param data 接收到的数据字符串（格式: "ms:t_17:15:15,p_1"）
  * @return 1=解析成功, 0=解析失败
  */
-uint8_t StatusPage_ParseMessage(const char* data);
+uint8_t StatusPage_ParseMessage(const char* data, uint16_t len, uint16_t* consumedLen);
 
 /**
  * @brief 获取当前状态栏页面状态

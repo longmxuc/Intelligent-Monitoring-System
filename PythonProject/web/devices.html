@@ -1059,8 +1059,15 @@
             const devId = normalizeDeviceId(dev.id);
             const isActive = selected && devId && selected === devId;
             const status = dev.online ? '在线' : '离线';
+            const unreadCount = window.MessageCenter && typeof window.MessageCenter.getDeviceUnreadCount === 'function'
+                ? window.MessageCenter.getDeviceUnreadCount(devId)
+                : 0;
+            const unreadBadge = unreadCount > 0
+                ? `<span class="device-select-unread" aria-label="未读警告">${unreadCount > 99 ? '99+' : unreadCount}</span>`
+                : '';
             return `
                 <button type="button" class="device-select-item ${isActive ? 'active' : ''}" data-device-id="${dev.id}">
+                    ${unreadBadge}
                     <div class="device-select-meta">
                         <span class="device-select-name">${dev.name || ('设备 ' + dev.id)}</span>
                         <span class="device-select-id">ID: ${dev.id}</span>
@@ -1087,6 +1094,12 @@
             devicePickerResolver = resolve;
         });
     }
+
+    window.addEventListener('messagecenter:unread-update', () => {
+        if (deviceSelectModal && deviceSelectModal.classList.contains('show')) {
+            updateDevicePicker();
+        }
+    });
 
     function closeDevicePicker(result = null) {
         deviceSelectModal.classList.remove('show');

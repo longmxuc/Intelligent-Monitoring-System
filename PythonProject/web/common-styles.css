@@ -801,6 +801,26 @@
     color: var(--text);
     width: 100%;
     text-align: left;
+    position: relative;
+}
+
+.device-select-unread {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    min-width: 20px;
+    padding: 0 6px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--bad);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+    box-shadow: 0 4px 10px rgba(239, 68, 68, 0.35);
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
 }
 
 .device-select-item:hover {

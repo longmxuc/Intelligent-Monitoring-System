@@ -1052,6 +1052,7 @@ const DevicePicker = {
     cancelBtn: null,
     resolver: null,
     devicesCache: [],
+    lastSelectedDeviceId: '',
     ensureTemplate() {
         if (this.modal) return;
         const wrapper = document.createElement('div');
@@ -1106,10 +1107,17 @@ const DevicePicker = {
             return [];
         }
     },
-    updateList(selectedDeviceId = null) {
+    updateList(selectedDeviceId) {
         if (!this.listEl) return;
-        // 确保selected和dev.id都是大写格式进行比较
-        const selected = selectedDeviceId ? String(selectedDeviceId).trim().toUpperCase() : '';
+        let selected = '';
+        if (typeof selectedDeviceId === 'string' || typeof selectedDeviceId === 'number') {
+            selected = String(selectedDeviceId).trim().toUpperCase();
+        } else if (selectedDeviceId === undefined && this.lastSelectedDeviceId) {
+            selected = this.lastSelectedDeviceId;
+        } else {
+            selected = '';
+        }
+        this.lastSelectedDeviceId = selected;
         if (!this.devicesCache.length) {
             this.listEl.innerHTML = '<div style="text-align: center; color: var(--muted); padding: 20px;">暂无可选设备</div>';
             return;
@@ -1124,8 +1132,15 @@ const DevicePicker = {
             const viaList = dev.via || transports;
             const viaText = viaList && viaList.length ? viaList.join(' / ') : '未知链路';
             const status = dev.online ? '在线' : '离线';
+            const unreadCount = window.MessageCenter && typeof window.MessageCenter.getDeviceUnreadCount === 'function'
+                ? window.MessageCenter.getDeviceUnreadCount(devId)
+                : 0;
+            const unreadBadge = unreadCount > 0
+                ? `<span class="device-select-unread" aria-label="未读警告">${unreadCount > 99 ? '99+' : unreadCount}</span>`
+                : '';
             return `
                 <button type="button" class="device-select-item ${isActive ? 'active' : ''}" data-device-id="${dev.id}">
+                    ${unreadBadge}
                     <div class="device-select-meta">
                         <span class="device-select-name">${dev.name || ('设备 ' + dev.id)}</span>
                         <span class="device-select-id">ID: ${dev.id}</span>
@@ -1196,6 +1211,11 @@ if (typeof window !== 'undefined') {
             return DevicePicker.open(hintText, selectedDeviceId);
         };
     }
+    window.addEventListener('messagecenter:unread-update', () => {
+        if (DevicePicker.modal && DevicePicker.modal.classList.contains('show')) {
+            DevicePicker.updateList();
+        }
+    });
 }
 
 /**
@@ -3065,11 +3085,14 @@ window.makeTimeLabelFormatter = makeTimeLabelFormatter;
 window.MessageCenter = {
     unreadWarningCount: 0,
     readMessageIds: new Set(), // 已读消息ID集合
+    deviceUnreadMap: new Map(), // 每个设备的未读数量
     refreshInterval: null, // 自动刷新定时器
     selectedDate: null, // 选中的日期（格式：YYYY-MM-DD）
     warningDates: [], // 有数据的日期列表（格式：[{date: "YYYY-MM-DD", count: 数量}, ...]）
     currentDeviceId: null, // 当前筛选的设备ID（大写，如 D01）
     beforeOpenHook: null, // 自定义打开前钩子
+    collapsedYears: new Set(), // 折叠的年份集合
+    collapsedMonths: new Set(), // 折叠的月份集合（格式：YYYY-MM）
 
     /**
      * 设置打开前钩子
@@ -3112,12 +3135,30 @@ window.MessageCenter = {
     /**
      * 标记消息为已读
      */
-    markAsRead: function (messageId) {
-        if (messageId && !this.readMessageIds.has(messageId)) {
-            this.readMessageIds.add(messageId);
-            this.saveReadMessageIds();
-            this.updateUnreadCount();
+    markAsRead: function (messageId, deviceId = null) {
+        if (!messageId || this.readMessageIds.has(messageId)) {
+            return;
         }
+        this.readMessageIds.add(messageId);
+        this.saveReadMessageIds();
+
+        // 根据已读消息即时更新全局未读计数，提升反馈速度
+        if (this.unreadWarningCount > 0) {
+            this.unreadWarningCount = Math.max(0, this.unreadWarningCount - 1);
+        }
+
+        const normalizedDeviceId = this.normalizeDeviceId(deviceId);
+        if (normalizedDeviceId && this.deviceUnreadMap.has(normalizedDeviceId)) {
+            const next = this.deviceUnreadMap.get(normalizedDeviceId) - 1;
+            if (next > 0) {
+                this.deviceUnreadMap.set(normalizedDeviceId, next);
+            } else {
+                this.deviceUnreadMap.delete(normalizedDeviceId);
+            }
+        }
+
+        this.updateUnreadCount();
+        this.notifyDeviceUnreadUpdate();
     },
 
     /**
@@ -3134,6 +3175,73 @@ window.MessageCenter = {
             }
         }
         return null;
+    },
+
+    /**
+     * 统一设备ID格式
+     */
+    normalizeDeviceId: function (deviceId) {
+        if (!deviceId && deviceId !== 0) return null;
+        const normalized = String(deviceId).trim().toUpperCase();
+        return normalized || null;
+    },
+
+    /**
+     * 获取指定设备的未读数量
+     */
+    getDeviceUnreadCount: function (deviceId) {
+        const normalized = this.normalizeDeviceId(deviceId);
+        if (!normalized) return 0;
+        return this.deviceUnreadMap.get(normalized) || 0;
+    },
+
+    /**
+     * 获取所有有未读的设备列表
+     */
+    getDeviceUnreadSummary: function () {
+        const list = [];
+        this.deviceUnreadMap.forEach((count, deviceId) => {
+            if (count > 0) {
+                list.push({deviceId, count});
+            }
+        });
+        return list.sort((a, b) => {
+            if (b.count !== a.count) return b.count - a.count;
+            return a.deviceId.localeCompare(b.deviceId);
+        });
+    },
+
+    /**
+     * 更新内部设备未读映射
+     */
+    setDeviceUnreadMap: function (messages) {
+        this.deviceUnreadMap = new Map();
+        (messages || []).forEach(msg => {
+            const deviceId = this.normalizeDeviceId(msg.device_id);
+            if (!deviceId) return;
+            const prev = this.deviceUnreadMap.get(deviceId) || 0;
+            this.deviceUnreadMap.set(deviceId, prev + 1);
+        });
+        this.notifyDeviceUnreadUpdate();
+    },
+
+    /**
+     * 分发设备未读更新事件，供设备选择器侦听
+     */
+    notifyDeviceUnreadUpdate: function () {
+        if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
+            return;
+        }
+        try {
+            window.dispatchEvent(new CustomEvent('messagecenter:unread-update', {
+                detail: {
+                    total: this.unreadWarningCount,
+                    devices: this.getDeviceUnreadSummary()
+                }
+            }));
+        } catch (error) {
+            console.warn('派发 messagecenter:unread-update 事件失败:', error);
+        }
     },
 
     /**
@@ -3327,7 +3435,7 @@ window.MessageCenter = {
 
             // 点击消息时标记为已读
             item.addEventListener('click', () => {
-                this.markAsRead(msg.id);
+                this.markAsRead(msg.id, msg.device_id);
             });
 
             const typeName = typeNames[msg.warning_type] || msg.warning_type;
@@ -3682,6 +3790,7 @@ window.MessageCenter = {
                 // 过滤掉已读的消息
                 const unreadMessages = result.data.filter(msg => !this.readMessageIds.has(msg.id));
                 this.unreadWarningCount = unreadMessages.length;
+                this.setDeviceUnreadMap(unreadMessages);
                 this.updateUnreadCount();
             }
         } catch (error) {
@@ -3947,69 +4056,175 @@ window.MessageCenter = {
         html += '<div style="border-top: 1px solid var(--bd); margin: 8px 0 4px 0;"></div>';
         html += '<div style="padding: 4px 0; font-size: 12px; color: var(--muted); margin-bottom: 4px; padding-bottom: 4px;">有数据的日期：</div>';
 
-        // 按年份分组显示日期
+        // 按年份和月份分组显示日期
         const datesByYear = {};
         this.warningDates.forEach(item => {
             const dateStr = typeof item === 'string' ? item : item.date;
             const date = new Date(dateStr + 'T00:00:00');
             const year = date.getFullYear();
+            const month = date.getMonth() + 1; // 1-12
+            
             if (!datesByYear[year]) {
-                datesByYear[year] = [];
+                datesByYear[year] = {};
             }
-            datesByYear[year].push(item);
+            if (!datesByYear[year][month]) {
+                datesByYear[year][month] = [];
+            }
+            datesByYear[year][month].push(item);
         });
 
         // 按年份倒序排列（最新的年份在前）
         const years = Object.keys(datesByYear).sort((a, b) => parseInt(b) - parseInt(a));
 
-        // 显示最近30个日期
-        let count = 0;
-        const maxDates = 30;
-
+        // 渲染每个年份
         years.forEach(year => {
-            if (count >= maxDates) return;
-
-            // 添加年份标题（移除上边框，因为已经在"有数据的日期："上面有分隔线了）
-            html += `<div style="padding: 8px 12px 4px; font-size: 13px; font-weight: 600; color: var(--primary); margin-top: 8px;">${year}年</div>`;
-
-            datesByYear[year].forEach(item => {
-                if (count >= maxDates) return;
-                count++;
-
-                const dateStr = typeof item === 'string' ? item : item.date;
-                const countNum = typeof item === 'object' && item.count ? item.count : 0;
-                const date = new Date(dateStr + 'T00:00:00');
-                const month = date.getMonth() + 1;
-                const day = date.getDate();
-                const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
-                const weekday = weekdays[date.getDay()];
-                const isSelected = this.selectedDate === dateStr;
-
-                html += `
-                    <div class="date-list-item" data-date="${dateStr}" style="
-                        padding: 8px 12px;
-                        cursor: pointer;
-                        border-radius: 4px;
-                        transition: all 0.2s;
-                        ${isSelected ? 'background: var(--primary); color: white;' : ''}
-                    " onmouseover="this.style.background=this.style.background.includes('primary')?'var(--primary)':'var(--bd)'" 
-                       onmouseout="this.style.background=this.style.background.includes('primary')?'var(--primary)':'transparent'">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span>${month}月${day}日 周${weekday} <span style="color: ${isSelected ? 'rgba(255,255,255,0.8)' : 'var(--muted)'}; font-size: 11px; margin-left: 6px;">(${countNum}条)</span></span>
-                            ${isSelected ? '<span>✓</span>' : ''}
-                        </div>
-                    </div>
-                `;
+            const yearCollapsed = this.collapsedYears.has(year);
+            const yearKey = year;
+            
+            // 计算该年份总共的消息数量
+            let yearTotalCount = 0;
+            Object.values(datesByYear[year]).forEach(monthDates => {
+                monthDates.forEach(item => {
+                    yearTotalCount += (typeof item === 'object' && item.count) ? item.count : 0;
+                });
             });
-        });
 
-        if (this.warningDates.length > maxDates) {
-            html += `<div style="padding: 8px; text-align: center; color: var(--muted); font-size: 11px;">还有 ${this.warningDates.length - maxDates} 个日期...</div>`;
-        }
+            // 添加年份标题（可点击折叠/展开）
+            html += `
+                <div class="date-year-header" data-year="${year}" style="
+                    padding: 8px 12px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: var(--primary);
+                    margin-top: 8px;
+                    cursor: pointer;
+                    border-radius: 4px;
+                    transition: all 0.2s;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    user-select: none;
+                " onmouseover="this.style.background='var(--bd)'" 
+                   onmouseout="this.style.background='transparent'">
+                    <span>
+                        <span style="display: inline-block; transition: transform 0.2s; transform: rotate(${yearCollapsed ? '-90deg' : '0deg'});">▼</span>
+                        ${year}年
+                    </span>
+                    <span style="font-size: 11px; color: var(--muted); font-weight: normal;">(${yearTotalCount}条)</span>
+                </div>
+            `;
+
+            // 如果年份未折叠，显示月份列表
+            if (!yearCollapsed) {
+                // 按月份倒序排列（最新的月份在前）
+                const months = Object.keys(datesByYear[year]).sort((a, b) => parseInt(b) - parseInt(a));
+                
+                months.forEach(month => {
+                    const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+                    const monthCollapsed = this.collapsedMonths.has(monthKey);
+                    
+                    // 计算该月份总共的消息数量
+                    let monthTotalCount = 0;
+                    datesByYear[year][month].forEach(item => {
+                        monthTotalCount += (typeof item === 'object' && item.count) ? item.count : 0;
+                    });
+
+                    // 添加月份标题（可点击折叠/展开）
+                    html += `
+                        <div class="date-month-header" data-month="${monthKey}" style="
+                            padding: 6px 12px 6px 24px;
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: var(--text);
+                            cursor: pointer;
+                            border-radius: 4px;
+                            transition: all 0.2s;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            user-select: none;
+                            margin-top: 4px;
+                        " onmouseover="this.style.background='var(--bd)'" 
+                           onmouseout="this.style.background='transparent'">
+                            <span>
+                                <span style="display: inline-block; transition: transform 0.2s; transform: rotate(${monthCollapsed ? '-90deg' : '0deg'}); font-size: 10px;">▼</span>
+                                ${month}月
+                            </span>
+                            <span style="font-size: 10px; color: var(--muted); font-weight: normal;">(${monthTotalCount}条)</span>
+                        </div>
+                    `;
+
+                    // 如果月份未折叠，显示日期列表
+                    if (!monthCollapsed) {
+                        // 按日期倒序排列（最新的日期在前）
+                        const sortedDates = datesByYear[year][month].sort((a, b) => {
+                            const dateA = typeof a === 'string' ? a : a.date;
+                            const dateB = typeof b === 'string' ? b : b.date;
+                            return dateB.localeCompare(dateA);
+                        });
+
+                        sortedDates.forEach(item => {
+                            const dateStr = typeof item === 'string' ? item : item.date;
+                            const countNum = typeof item === 'object' && item.count ? item.count : 0;
+                            const date = new Date(dateStr + 'T00:00:00');
+                            const day = date.getDate();
+                            const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+                            const weekday = weekdays[date.getDay()];
+                            const isSelected = this.selectedDate === dateStr;
+
+                            html += `
+                                <div class="date-list-item" data-date="${dateStr}" style="
+                                    padding: 6px 12px 6px 40px;
+                                    cursor: pointer;
+                                    border-radius: 4px;
+                                    transition: all 0.2s;
+                                    font-size: 12px;
+                                    ${isSelected ? 'background: var(--primary); color: white;' : ''}
+                                " onmouseover="this.style.background=this.style.background.includes('primary')?'var(--primary)':'var(--bd)'" 
+                                   onmouseout="this.style.background=this.style.background.includes('primary')?'var(--primary)':'transparent'">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span>${day}日 周${weekday} <span style="color: ${isSelected ? 'rgba(255,255,255,0.8)' : 'var(--muted)'}; font-size: 10px; margin-left: 4px;">(${countNum}条)</span></span>
+                                        ${isSelected ? '<span>✓</span>' : ''}
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
+                });
+            }
+        });
 
         content.innerHTML = html;
 
-        // 绑定点击事件
+        // 绑定年份折叠/展开事件
+        content.querySelectorAll('.date-year-header').forEach(header => {
+            header.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const year = header.getAttribute('data-year');
+                if (this.collapsedYears.has(year)) {
+                    this.collapsedYears.delete(year);
+                } else {
+                    this.collapsedYears.add(year);
+                }
+                this.updateDateList(); // 重新渲染
+            });
+        });
+
+        // 绑定月份折叠/展开事件
+        content.querySelectorAll('.date-month-header').forEach(header => {
+            header.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const monthKey = header.getAttribute('data-month');
+                if (this.collapsedMonths.has(monthKey)) {
+                    this.collapsedMonths.delete(monthKey);
+                } else {
+                    this.collapsedMonths.add(monthKey);
+                }
+                this.updateDateList(); // 重新渲染
+            });
+        });
+
+        // 绑定日期点击事件
         content.querySelectorAll('.date-list-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 e.stopPropagation();

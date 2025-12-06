@@ -86,6 +86,7 @@ target/
 # PythonProject 机密配置
 secrets.txt
 cafile/
+论文.md
 
 # STM32 / CMake 生成目录
 build/
@@ -94,3 +95,6 @@ Drivers/
 # demo/临时目录与本地文档目录
 demoWeb/
 README/
+
+# 图床
+picturebed/

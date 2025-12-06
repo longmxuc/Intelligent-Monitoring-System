@@ -38,8 +38,35 @@ class MqttMessageSender:
         # 跟踪每个设备的消息发送状态
         self.message_send_tasks: Dict[str, Dict] = {}
         self.message_send_lock = asyncio.Lock()
-        self.max_duration = 120  # 最大发送时长（秒）
+        self.max_duration = 30  # 最大发送时长（秒）
     
+    def _publish_message(self, device_id: str, message: str) -> bool:
+        """向指定设备的 data_cmd 主题发布消息。"""
+        mqtt_client = self.get_mqtt_client()
+        mqtt_connected = self.get_mqtt_connected()
+
+        if not (mqtt_connected and mqtt_client):
+            print(f"【MQTT-消息发送】❌ MQTT未连接，无法发送消息（{device_id} -> {message}）")
+            return False
+
+        cmd_topic_map = self.get_cmd_topic_map()
+        target_topic = cmd_topic_map.get(device_id)
+        if not target_topic:
+            print(f"【MQTT-消息发送】❌ 设备 {device_id} 没有对应的命令主题，无法发送 {message}")
+            return False
+
+        try:
+            result = mqtt_client.publish(target_topic, message, qos=1)
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                print(f"【MQTT-消息发送】✓ 设备 {device_id} -> {target_topic}: {message}")
+                return True
+            else:
+                print(f"【MQTT-消息发送】❌ 设备 {device_id} 发布失败，错误码: {result.rc} | 消息: {message}")
+                return False
+        except Exception as e:
+            print(f"【MQTT-消息发送】设备 {device_id} 发送异常：{e} | 消息: {message}")
+            return False
+
     async def _message_send_task(self, device_id: str):
         """
         为指定设备定期发送消息到data_cmd频道
@@ -56,6 +83,7 @@ class MqttMessageSender:
                 elapsed = time.time() - start_time
                 if elapsed >= self.max_duration:
                     print(f"【MQTT-消息发送】设备 {device_id} 发送超过 {self.max_duration} 秒，自动停止")
+                    self._publish_message(device_id, "ms:timeout")
                     break
                 
                 # 检查是否仍然激活
@@ -75,27 +103,7 @@ class MqttMessageSender:
                 
                 # 构造消息：ms:t_17:31:31,p_2
                 message = f"ms:t_{time_str},p_{ws_count}"
-                
-                # 发送到对应的data_cmd主题
-                mqtt_client = self.get_mqtt_client()
-                mqtt_connected = self.get_mqtt_connected()
-                
-                if mqtt_connected and mqtt_client is not None:
-                    cmd_topic_map = self.get_cmd_topic_map()
-                    target_topic = cmd_topic_map.get(device_id)
-                    if target_topic:
-                        try:
-                            result = mqtt_client.publish(target_topic, message, qos=1)
-                            if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                                print(f"【MQTT-消息发送】✓ 设备 {device_id} -> {target_topic}: {message}")
-                            else:
-                                print(f"【MQTT-消息发送】❌ 设备 {device_id} 发布失败，错误码: {result.rc}")
-                        except Exception as e:
-                            print(f"【MQTT-消息发送】设备 {device_id} 发送异常：{e}")
-                    else:
-                        print(f"【MQTT-消息发送】❌ 设备 {device_id} 没有对应的命令主题")
-                else:
-                    print(f"【MQTT-消息发送】❌ MQTT未连接，无法发送消息")
+                self._publish_message(device_id, message)
                 
                 # 等待1秒
                 await asyncio.sleep(1.0)

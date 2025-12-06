@@ -48,5 +48,7 @@ extern const Image lightImg;
 extern const Image qiyaImg;
 extern const Image haibaImg;
 extern const Image smokeImg;
+extern const Image sadImg;
+extern const Image smileImg;
 
 #endif // __FONT_H

@@ -85,11 +85,14 @@
             box-sizing: border-box
         }
 
-        html, body {
-            height: 100%
+        html {
+            height: 100%;
+            margin: 0;
+            padding: 0;
         }
 
         body {
+            height: 100%;
             margin: 0;
             padding: 20px;
             background: var(--bg);
@@ -108,7 +111,9 @@
 
         .wrap {
             max-width: 1300px;
-            margin: 0 auto
+            margin: 0 auto;
+            border: none;
+            outline: none;
         }
 
         header {
@@ -116,7 +121,9 @@
             align-items: center;
             justify-content: space-between;
             gap: 12px;
-            margin-bottom: 20px
+            margin-bottom: 20px;
+            border: none;
+            outline: none;
         }
 
         @media (max-width: 768px) {
@@ -1867,6 +1874,14 @@
             overflow: hidden;
             max-height: 0;
             transition: max-height 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            /* 当高度为0时，隐藏边框，防止出现顶部灰线 */
+            visibility: hidden;
+            opacity: 0;
+        }
+        
+        .ai-suggestions-mobile-modal.show .ai-suggestions-mobile-content {
+            visibility: visible;
+            opacity: 1;
         }
         
         .ai-suggestions-mobile-header {
@@ -1878,7 +1893,7 @@
             flex-shrink: 0;
             min-height: 44px;
         }
-        
+
         .ai-suggestions-mobile-title {
             font-size: 14px;
             font-weight: 600;

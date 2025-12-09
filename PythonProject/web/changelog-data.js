@@ -5,6 +5,20 @@
  */
 const CHANGELOG_DATA = [
     {
+        version: 'Version 1.0.4',
+        data: '更新日期：2025.12.9',
+        items: [
+            '重写了/api/status的判断逻辑，解放前端压力。'
+        ]
+    },
+    {
+        version: 'Version 1.0.3',
+        date: '更新日期：2025.12.7',
+        items: [
+               '修复了分析页Body中残留的边框问题，原因是AI移动端建议弹窗虽然max-height: 0，但是有 border: 1px solid var(--bd)（边框）而且position: fixed 固定在顶部。'
+        ]
+    },
+    {
         version: 'Version 1.0.2',
         date: '更新日期：2025.12.6',
         items: [

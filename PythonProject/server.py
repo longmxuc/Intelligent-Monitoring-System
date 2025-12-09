@@ -92,6 +92,10 @@ mqtt_first_message_received = {}  # 字典，key为主题，value为是否已收
 # 当前活跃的BLE客户端（用于写入命令）
 ble_client = None
 
+# 设备最后消息时间记录（用于判断设备在线状态）
+device_last_message_time = {}  # 字典，key为设备ID，value为最后一次收到消息的时间戳
+DEVICE_ONLINE_TIMEOUT = 10  # 设备在线超时时间（秒），超过此时间未收到消息则判定为离线
+
 # 自动恢复机制配置
 AUTO_RECOVERY_NORMAL_PACKETS = 3  # 连续收到N个正常数据包后自动标记为安全（默认3个，即30秒）
 # 跟踪每个传感器类型的连续正常数据包计数
@@ -529,7 +533,7 @@ def _enqueue_reading(t: float, h: float, lux, smoke=None, rs_ro=None, temp2=None
 
 
 def ble_notify_handler(_handle, data: bytearray):
-    global _buffer
+    global _buffer, device_last_message_time
     _buffer += data
     while True:
         idx = _buffer.find(LINE_END)
@@ -537,6 +541,9 @@ def ble_notify_handler(_handle, data: bytearray):
             break
         line = _buffer[:idx].decode(errors="ignore").strip()
         _buffer[:] = _buffer[idx + len(LINE_END):]
+
+        # 更新设备最后消息时间（蓝牙设备对应D01）
+        device_last_message_time["D01"] = time.time()
 
         # 解析数据格式：T=24.61H=45.78%L=0.0R=1.01Y=3.4W=26.10P=1014.23
         m = PATTERN_DATA.fullmatch(line)
@@ -876,7 +883,7 @@ def mqtt_on_message(client, userdata, msg):
     MQTT消息回调
     处理从MQTT接收到的消息（传感器数据、定位信息等）
     """
-    global ble_connected, mqtt_first_message_received, main_loop
+    global ble_connected, mqtt_first_message_received, main_loop, device_last_message_time
 
     try:
         topic = msg.topic
@@ -885,6 +892,10 @@ def mqtt_on_message(client, userdata, msg):
         # 从主题中提取设备ID
         device_id = extract_device_id_from_topic(topic)
         device_info = f" [设备: {device_id}]" if device_id else ""
+        
+        # 更新设备最后消息时间
+        if device_id:
+            device_last_message_time[device_id] = time.time()
 
         # 屏蔽传感器数据主题的第一条消息（通常是服务器保留的最后一条消息，会导致重复数据）
         if topic in MQTT_TOPICS and topic not in mqtt_first_message_received:
@@ -3423,40 +3434,30 @@ async def get_connection_status():
 async def get_devices():
     """
     获取所有已配置设备及其在线状态
+    基于设备最后消息时间判断：10秒内收到消息则在线，否则离线
     """
-    global ble_connected, mqtt_connected
+    global ble_connected, mqtt_connected, device_last_message_time
 
     devices = []
-    db = get_db_manager()
+    current_time = time.time()
 
     for dev_id in get_managed_mq2_devices():
         has_ble = (dev_id == "D01")
         has_mqtt = True  # 所有 Dxx 都走 MQTT
 
-        via_list = []
-        if has_ble and ble_connected:
-            via_list.append("BLE")
-        if mqtt_connected:
-            via_list.append("MQTT")
-
-        online = bool(via_list)
-
-        # 读取 MQ2 状态（可能为空）
-        mq2_state = await db.get_sensor_state("MQ2", device_id=dev_id)
-        if mq2_state:
-            mode = mq2_state.get("mode")
-            mode_cfg = get_mq2_mode_config(mode or DEFAULT_MQ2_MODE)
-            mq2_info = {
-                "sensor_state": mq2_state.get("sensor_state"),
-                "mode": mode or DEFAULT_MQ2_MODE,
-                "mode_name": mode_cfg["name"],
-                "mode_icon": mode_cfg["icon"],
-                "phase": mq2_state.get("phase"),
-                "phase_message": mq2_state.get("phase_message"),
-                "last_value": mq2_state.get("last_value")
-            }
+        # 判断设备是否在线：基于最后消息时间
+        last_message_time = device_last_message_time.get(dev_id)
+        if last_message_time and (current_time - last_message_time) <= DEVICE_ONLINE_TIMEOUT:
+            online = True
+            # 判断通过哪些方式在线
+            via_list = []
+            if has_ble and ble_connected:
+                via_list.append("BLE")
+            if mqtt_connected:
+                via_list.append("MQTT")
         else:
-            mq2_info = {}
+            online = False
+            via_list = []
 
         # 从配置中获取设备名称，如果未配置则使用默认格式
         device_name = DEVICE_NAMES.get(dev_id, f"环境监测设备 {dev_id}")
@@ -3468,7 +3469,6 @@ async def get_devices():
             "via": via_list,
             "has_ble": has_ble,
             "has_mqtt": has_mqtt,
-            "mq2": mq2_info,
             "description": "本地实验室多传感器监测节点"
         })
 

@@ -892,7 +892,7 @@ def mqtt_on_message(client, userdata, msg):
         # 从主题中提取设备ID
         device_id = extract_device_id_from_topic(topic)
         device_info = f" [设备: {device_id}]" if device_id else ""
-        
+
         # 更新设备最后消息时间
         if device_id:
             device_last_message_time[device_id] = time.time()
@@ -957,7 +957,8 @@ def mqtt_on_message(client, userdata, msg):
                 global mqtt_message_sender
                 payload_normalized = payload.strip().lower()
                 if payload_normalized in ["onmessage", "offmessage"]:
-                    print(f"【MQTT】检测到消息命令: {payload_normalized}, 设备: {device_id}, mqtt_message_sender: {mqtt_message_sender is not None}")
+                    print(
+                        f"【MQTT】检测到消息命令: {payload_normalized}, 设备: {device_id}, mqtt_message_sender: {mqtt_message_sender is not None}")
                     if mqtt_message_sender:
                         result = mqtt_message_sender.handle_message(device_id, payload)
                         print(f"【MQTT】handle_message 返回: {result}")
@@ -1263,7 +1264,7 @@ async def lifespan(app: FastAPI):
     # 保存主事件循环引用
     main_loop = asyncio.get_running_loop()
     print(f"【服务】事件循环已保存：{main_loop}")
-    
+
     # 初始化MQTT消息发送管理器
     mqtt_message_sender = MqttMessageSender(
         get_mqtt_client=lambda: mqtt_client,
@@ -1319,7 +1320,7 @@ async def lifespan(app: FastAPI):
             await mq2_bootstrap_task
         except asyncio.CancelledError:
             pass
-    
+
     for task in list(bmp180_cycle_tasks.values()):
         task.cancel()
         try:
@@ -1334,7 +1335,7 @@ async def lifespan(app: FastAPI):
             await bmp180_bootstrap_task
         except asyncio.CancelledError:
             pass
-    
+
     for task in list(bh1750_cycle_tasks.values()):
         task.cancel()
         try:
@@ -1376,6 +1377,7 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 app.mount("/resource", StaticFiles(directory=str(RESOURCE_DIR)), name="resource")
 
 
+# HTML页面
 # 设备总览首页：强制不缓存，防止浏览器看到旧 HTML
 @app.get("/", tags=["首页-设备总览"])
 async def device_index():
@@ -1418,6 +1420,28 @@ async def realtime_index():
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
 
+
+# 数据分析页面
+@app.get("/analysis.html", tags=["数据分析页"])
+async def analysis_page():
+    analysis_file = WEB_DIR / "analysis.html"
+    if not analysis_file.exists():
+        return Response("未找到 web/analysis.html", status_code=404)
+    return FileResponse(
+        str(analysis_file),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
+
+
+@app.get("/easter.html", tags=["彩蛋页"])
+async def easter_page():
+    easter_file = WEB_DIR / "easter.html"
+    if not easter_file.exists():
+        return Response("未找到 web/easter.html", status_code=404)
+    return FileResponse(
+        str(easter_file),
+        headers={"Cache-Control": "no-store, must-revalidate, max-age=0"}
+    )
 
 # 这是给微信验证用的接口
 @app.get("/248a1604fe87bdaa034745d8ed14e74e.txt", tags=["微信验证"], response_class=PlainTextResponse)
@@ -1806,7 +1830,8 @@ async def apply_bmp180_phase(db, mode_key: str, target_phase: str, config: dict,
         device_id=device_id
     )
     label = "开启" if target_phase == "on" else "关闭"
-    print(f"【BMP180调度】✓ {config['name']} {label}成功，下一次在 {('%.0f秒后' % duration) if duration else '持续运行'} 切换")
+    print(
+        f"【BMP180调度】✓ {config['name']} {label}成功，下一次在 {('%.0f秒后' % duration) if duration else '持续运行'} 切换")
     return True
 
 
@@ -1914,7 +1939,7 @@ async def bmp180_cycle_manager(device_id: str):
 
 # ============ BH1750 调度器 ============
 async def apply_bh1750_phase(db, mode_key: str, target_phase: str, config: dict, duration: Optional[int],
-                              device_id: str = "D01"):
+                             device_id: str = "D01"):
     """根据目标阶段发送开启/关闭命令，并写入数据库状态。"""
     command = "ONBH1750" if target_phase == "on" else "OFFBH1750"
     result = await send_command_ble_or_mqtt(command, device_id=device_id)
@@ -1944,7 +1969,8 @@ async def apply_bh1750_phase(db, mode_key: str, target_phase: str, config: dict,
         device_id=device_id
     )
     label = "开启" if target_phase == "on" else "关闭"
-    print(f"【BH1750调度】✓ {config['name']} {label}成功，下一次在 {('%.0f秒后' % duration) if duration else '持续运行'} 切换")
+    print(
+        f"【BH1750调度】✓ {config['name']} {label}成功，下一次在 {('%.0f秒后' % duration) if duration else '持续运行'} 切换")
     return True
 
 
@@ -2717,17 +2743,6 @@ async def get_oled_state(device_id: str = "D01"):
         print(f"【API】获取OLED状态失败：{e}")
         return {"success": False, "error": str(e)}
 
-
-# 数据分析页面
-@app.get("/analysis.html", tags=["数据分析页"])
-async def analysis_page():
-    analysis_file = WEB_DIR / "analysis.html"
-    if not analysis_file.exists():
-        return Response("未找到 web/analysis.html", status_code=404)
-    return FileResponse(
-        str(analysis_file),
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-    )
 
 
 # API：获取历史数据

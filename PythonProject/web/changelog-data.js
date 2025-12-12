@@ -5,8 +5,15 @@
  */
 const CHANGELOG_DATA = [
     {
+        version: 'Version 1.0.5',
+        date: '更新日期：2025.12.13',
+        items: [
+            '重写了彩蛋页的实现方式，现在是一个独立的页面，可以避免重叠HTML导致的部分安卓设备闪屏问题。'
+        ]
+    },
+    {
         version: 'Version 1.0.4',
-        data: '更新日期：2025.12.9',
+        date: '更新日期：2025.12.9',
         items: [
             '重写了/api/status的判断逻辑，解放前端压力。'
         ]

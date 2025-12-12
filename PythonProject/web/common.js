@@ -2702,26 +2702,16 @@ function initAboutModal() {
                 this.style.boxShadow = 'var(--shadow)';
             });
 
-            // 点击头像触发启动画面彩蛋
+            // 点击头像跳转到彩蛋页面
             aboutAvatar.addEventListener('click', function () {
                 // 先关闭关于项目弹窗
                 closeAbout();
 
-                // 延迟一点时间后显示启动画面，让弹窗关闭动画完成
+                // 延迟一点时间后跳转到彩蛋页面，让弹窗关闭动画完成
                 setTimeout(() => {
-                    if (window.showSplashScreen) {
-                        window.showSplashScreen();
-                        console.log('🎉 彩蛋触发：显示启动画面');
-                    } else {
-                        console.warn('⚠️ 启动画面函数未找到');
-                    }
+                    window.location.href = '/easter.html';
                 }, 300);
             });
-        }
-
-        // 初始化启动画面系统（如果还没有初始化）
-        if (typeof window.showSplashScreen === 'undefined') {
-            initSplashScreen();
         }
 
         aboutModalInitialized = true;
@@ -2731,185 +2721,6 @@ function initAboutModal() {
     }
 }
 
-/**
- * 生成启动画面HTML结构
- * @returns {string} HTML字符串
- */
-function generateSplashScreenHTML() {
-    return `
-<!-- 启动画面 -->
-<div class="splash-screen removed" id="splashScreen">
-    <div class="splash-page">
-        <div class="splash-bg" id="splashBg" aria-hidden="true">
-            <div class="splash-blob splash-b1"></div>
-            <div class="splash-blob splash-b2"></div>
-            <div class="splash-blob splash-b3"></div>
-            <div class="splash-ray"></div>
-            <div class="splash-veil"></div>
-        </div>
-        <div class="splash-center">
-            <div class="splash-stack" role="main" aria-label="Hero">
-                <div class="splash-avatar" aria-label="Avatar placeholder">
-                    <img src="/resource/img.jpg" alt="Avatar" />
-                </div>
-                <h1 class="splash-title">基于STM32和物联网的智能环境监测系统设计与实现</h1>
-                <div class="splash-typewrap"><span class="splash-typewriter">to be continued</span></div>
-            </div>
-        </div>
-    </div>
-</div>
-    `;
-}
-
-/**
- * 创建启动画面（动态插入到页面）
- */
-function createSplashScreen() {
-    // 检查是否已经存在
-    if (document.getElementById('splashScreen')) {
-        console.log('⚠️ 启动画面已存在，跳过创建');
-        return;
-    }
-
-    // 生成HTML并插入到body开头
-    const splashHTML = generateSplashScreenHTML();
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = splashHTML.trim();
-    const splashElement = tempDiv.firstElementChild;
-    document.body.insertBefore(splashElement, document.body.firstChild);
-
-    console.log('✅ 启动画面已创建');
-}
-
-/**
- * 初始化启动画面系统
- */
-function initSplashScreen() {
-    // 先创建启动画面HTML结构
-    createSplashScreen();
-
-    const splashScreen = document.getElementById('splashScreen');
-    const splashBg = document.getElementById('splashBg');
-
-    if (!splashScreen || !splashBg) {
-        console.error('❌ 启动画面元素未找到');
-        return;
-    }
-
-    let isSplashVisible = false;
-    let splashParallaxActive = false;
-
-    // 视差效果：鼠标/触控带动背景轻微漂移与缩放
-    let tx = 0, ty = 0, sx = 0, sy = 0, raf = 0;
-
-    const onMove = (x, y) => {
-        if (!splashParallaxActive) return;
-        const nx = (x / window.innerWidth) - 0.5;
-        const ny = (y / window.innerHeight) - 0.5;
-        tx = nx * 24;
-        ty = ny * 18;
-        cancelAnimationFrame(raf);
-        raf = requestAnimationFrame(tick);
-    };
-
-    const tick = () => {
-        sx += (tx - sx) * 0.06;
-        sy += (ty - sy) * 0.06;
-        if (splashBg) {
-            splashBg.style.transform = `translate(${sx}px, ${sy}px) scale(1.03)`;
-        }
-        if (Math.abs(tx - sx) > 0.1 || Math.abs(ty - sy) > 0.1) {
-            raf = requestAnimationFrame(tick);
-        }
-    };
-
-    // 显示启动画面
-    const showSplash = () => {
-        if (isSplashVisible) return;
-        isSplashVisible = true;
-        splashParallaxActive = true;
-
-        // 移除隐藏和移除状态，确保显示
-        splashScreen.classList.remove('removed', 'hidden');
-        splashScreen.style.display = 'block';
-
-        // 如果还没有 fade-in 类，添加渐入动画
-        if (!splashScreen.classList.contains('fade-in')) {
-            // 先设置 opacity 为 0，然后添加动画类
-            splashScreen.style.opacity = '0';
-            // 强制重排以触发动画
-            void splashScreen.offsetHeight;
-            splashScreen.classList.add('fade-in');
-        }
-
-        document.body.classList.add('splash-active');
-
-        // 重置视差效果
-        tx = 0;
-        ty = 0;
-        sx = 0;
-        sy = 0;
-        if (splashBg) {
-            splashBg.style.transform = '';
-        }
-
-        // 动画结束后移除 fade-in 类和内联样式
-        setTimeout(() => {
-            splashScreen.classList.remove('fade-in');
-            splashScreen.style.opacity = '';
-        }, 600); // 动画持续时间
-    };
-
-    // 隐藏启动画面
-    const hideSplash = () => {
-        if (!isSplashVisible) return;
-        isSplashVisible = false;
-        splashParallaxActive = false;
-        splashScreen.classList.add('hidden');
-        document.body.classList.remove('splash-active');
-
-        // 淡出动画完成后移除元素
-        setTimeout(() => {
-            splashScreen.classList.add('removed');
-        }, 600); // 等待淡出动画完成（0.6s）
-    };
-
-    // 添加视差效果监听器（只添加一次）
-    window.addEventListener('pointermove', e => onMove(e.clientX, e.clientY), {passive: true});
-    window.addEventListener('touchmove', e => {
-        const t = e.touches[0];
-        if (t) onMove(t.clientX, t.clientY);
-    }, {passive: true});
-
-    // 添加点击关闭功能：点击启动画面任意位置可关闭
-    splashScreen.addEventListener('click', (e) => {
-        // 只要点击在启动画面内（包括所有子元素），就关闭
-        // 检查点击的元素是否在splashScreen内
-        if (splashScreen.contains(e.target)) {
-            hideSplash();
-        }
-    });
-
-    // 添加键盘ESC关闭功能
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isSplashVisible) {
-            hideSplash();
-        }
-    });
-
-    // 初始状态：隐藏启动画面
-    splashScreen.classList.add('removed');
-    document.body.classList.remove('splash-active');
-
-    // 暴露启动画面控制函数为全局函数，供其他脚本调用
-    window.showSplashScreen = showSplash;
-    window.hideSplashScreen = hideSplash;
-
-    console.log('✅ 启动画面系统已初始化');
-}
-
-// 暴露全局函数
-window.initSplashScreen = initSplashScreen;
 
 /**
  * 检查首次访问并显示帮助

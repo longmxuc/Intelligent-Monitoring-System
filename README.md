@@ -357,7 +357,7 @@ float filtered = MedianFilter_Process(tempFilter, rawTemp, /*fastMode=*/1, curre
   - 支持多条数据曲线叠加（例如温度/湿度/亮度/气压/PPM 等）；
   - 内置统计信息与异常标记，帮助分析某段时间的环境波动；
   - 针对大数据量做了加载优化，根据数据量动态调整加载节奏。
-- `web/continued.html`：极简加载/过渡页，用于首屏体验或慢网环境下的过渡展示。
+- `web/easter.html`：彩蛋页面，用于展示项目题目。
 
 **前端交互与状态管理：**
 
@@ -472,7 +472,7 @@ python server.py
 1. **使用 STM32CubeIDE / Keil 等传统 IDE**
    - 打开 `oled/oled.ioc`，由 CubeMX 重新生成工程，再导入到 IDE。
    - 将 `Core/` 与 `Drivers/` 目录配置为工程源代码与头文件路径。
-2. **使用 CMake + arm-none-eabi-gcc（推荐）**
+2. **使用 CMake + arm-none-eabi-gcc（推荐，因为本项目使用的就是Clion+Cmake）**
 
 在具备 ARM 工具链的环境中：
 
@@ -541,6 +541,10 @@ st-flash write build/Debug/oled.bin 0x08000000
   - `GET /api/ai/health`：AI 服务健康检查。
 - 系统状态
   - `GET /api/status`：整体健康检查（BLE/MQTT/数据库/AI 等状态汇总），前端可据此显示连接状态指示。
+
+
+
+**感谢你能看到这里，如有BUG或者建议，请提交Issues**。以下是更新内容：
 
 
 

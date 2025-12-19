@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/platform-STM32-blue" />
   <img src="https://img.shields.io/badge/protocol-MQTT-orange" />
 </p>
-<h1>STM32 智能环境监测系统  Version 1.0.5</h1>
+<h1 align="center">PengX智能环境监测系统</h1>
 
 本仓库为「电子信息工程专业」毕业设计《基于 STM32 和物联网的智能环境监测系统》的工程代码，面向实验室、机房、宿舍等小场景的 **多设备多传感器环境监测云平台**。  
 

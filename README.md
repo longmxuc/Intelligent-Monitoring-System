@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="PythonProject/resource/logo.png" width="240" />
+</p>
+
+
+<p align="center">
+  <a href="https://www.gnu.org/licenses/gpl-3.0">
+    <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" />
+  </a>
+</p>
 # STM32 智能环境监测系统  Version 1.0.5（正式版）
 
 本仓库为「电子信息工程专业」毕业设计《基于 STM32 和物联网的智能环境监测系统》的工程代码，面向实验室、机房、宿舍等小场景的 **多设备多传感器环境监测云平台**。  
@@ -15,6 +25,7 @@
 - 后端 API、数据库与提示词全面重写，支持多达 5 台设备的省电控制列表与独立传感器开关。
 - STM32 端新增状态栏与更安全的 OLED 关闭流程，搭配 PCB 2.1+ 支持硬件级传感器断电。
 - **端云双向通信亮点：** 单片机不仅会通过 BLE / 4G 持续向服务器上报传感器数据和异常状态，还会定期从服务器实时获取“当前时间 + 在线人数”等云端状态，在 OLED 状态栏上滚动展示，实现真正意义上的 MCU ↔ 服务器双向互动。
+  
   - 端云交互示意：
   
     ```text
